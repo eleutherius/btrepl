@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/liakhov/btrepl/internal/btrfs"
-	"github.com/liakhov/btrepl/internal/config"
-	"github.com/liakhov/btrepl/internal/sshclient"
+	"github.com/eleutherius/btrepl/internal/btrfs"
+	"github.com/eleutherius/btrepl/internal/config"
+	"github.com/eleutherius/btrepl/internal/sshclient"
 )
 
 type Replicator struct {
