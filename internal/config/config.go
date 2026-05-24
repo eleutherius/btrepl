@@ -15,6 +15,7 @@ type Config struct {
 	SSHUser        string   `yaml:"ssh_user"`
 	SnapshotDir    string   `yaml:"snapshot_dir"`
 	SnapshotPrefix string   `yaml:"snapshot_prefix"`
+	Interval       string   `yaml:"interval"`
 	KeepSender     int      `yaml:"keep_sender"`
 	KeepReceiver   int      `yaml:"keep_receiver"`
 	Subvolumes     []string `yaml:"subvolumes"`
@@ -28,6 +29,7 @@ func Default() *Config {
 		SSHUser:        "root",
 		SnapshotDir:    ".snapshots",
 		SnapshotPrefix: "btrepl_",
+		Interval:       "1h",
 		KeepSender:     428,
 		KeepReceiver:   10,
 		Subvolumes:     []string{"@eventsPictures", "@reports"},

@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package btrepl.v1;
+
+option go_package = "github.com/eleutherius/btrepl/api";
+
+service Btrepl {
+  rpc Run(RunRequest)           returns (RunResponse);
+  rpc Status(StatusRequest)     returns (StatusResponse);
+  rpc AddSlave(SlaveRequest)    returns (SlaveResponse);
+  rpc DelSlave(SlaveRequest)    returns (SlaveResponse);
+  rpc WatchLogs(WatchLogsRequest) returns (stream LogEntry);
+}
+
+message RunRequest {}
+message RunResponse {
+  bool   ok    = 1;
+  string error = 2;
+}
+
+message StatusRequest {}
+message StatusResponse {
+  bool            timer_active = 1;
+  string          interval     = 2;
+  repeated string slaves       = 3;
+  repeated SubvolStatus subvolumes = 4;
+}
+
+message SubvolStatus {
+  string name            = 1;
+  int32  snapshot_count  = 2;
+  string latest_snapshot = 3;
+}
+
+message SlaveRequest  { string ip = 1; }
+message SlaveResponse {
+  bool   ok    = 1;
+  string error = 2;
+}
+
+message WatchLogsRequest {}
+message LogEntry {
+  string            level   = 1;
+  string            message = 2;
+  string            time    = 3;
+  map<string,string> attrs  = 4;
+}

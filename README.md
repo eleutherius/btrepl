@@ -79,14 +79,72 @@ btrepl add-slave -s 192.168.1.10
 | Command | Description |
 |---|---|
 | `btrepl init-master` | Initialize config, snapshot dir, btrfs quota |
-| `btrepl add-slave -s <IP>` | Add a slave; starts the timer if not running |
-| `btrepl del-slave -s <IP>` | Remove a slave; stops the timer if no slaves remain |
-| `btrepl run` | Run one replication cycle (called by the systemd timer) |
+| `btrepl serve [--addr :50051]` | Start gRPC daemon with internal replication loop |
+| `btrepl add-slave -s <IP>` | Add a slave |
+| `btrepl del-slave -s <IP>` | Remove a slave |
+| `btrepl run` | Run one replication cycle manually |
 | `btrepl status [-s <IP>]` | Show timer state, snapshot counts, optionally remote latest snapshot |
 | `btrepl standalone` | Promote latest snapshot to writable, detach from replication |
 | `btrepl clear` | Stop replication and delete all local snapshots |
 
 All commands accept `-c /path/to/config.yaml` to override the default config path (`/etc/btrepl/config.yaml`).
+
+## gRPC API
+
+`btrepl serve` starts a long-running daemon that exposes a gRPC server (default `:50051`) and runs the replication loop internally based on `interval` from the config. No systemd timer needed.
+
+### Proto
+
+```protobuf
+service Btrepl {
+  rpc Run(RunRequest)             returns (RunResponse);
+  rpc Status(StatusRequest)       returns (StatusResponse);
+  rpc AddSlave(SlaveRequest)      returns (SlaveResponse);
+  rpc DelSlave(SlaveRequest)      returns (SlaveResponse);
+  rpc WatchLogs(WatchLogsRequest) returns (stream LogEntry);
+}
+```
+
+Full definition: [`api/btrepl.proto`](api/btrepl.proto)
+
+### Python example
+
+Install the generated stubs or regenerate from the proto:
+
+```bash
+pip install grpcio grpcio-tools
+python -m grpc_tools.protoc -I api --python_out=. --grpc_python_out=. api/btrepl.proto
+```
+
+```python
+import grpc
+import btrepl_pb2, btrepl_pb2_grpc
+
+channel = grpc.insecure_channel("192.168.139.232:50051")
+stub = btrepl_pb2_grpc.BtreplStub(channel)
+
+# trigger replication immediately
+stub.Run(btrepl_pb2.RunRequest())
+
+# add a slave
+stub.AddSlave(btrepl_pb2.SlaveRequest(ip="192.168.139.196"))
+
+# get status
+resp = stub.Status(btrepl_pb2.StatusRequest())
+print(resp.slaves, resp.subvolumes)
+
+# stream logs in real time
+for entry in stub.WatchLogs(btrepl_pb2.WatchLogsRequest()):
+    print(f"[{entry.level}] {entry.message}")
+```
+
+### Systemd setup (daemon mode)
+
+```bash
+cp deploy/btrepl.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now btrepl.service
+```
 
 ## Systemd setup
 

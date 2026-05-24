@@ -1,15 +1,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 
+	pb "github.com/eleutherius/btrepl/api"
 	"github.com/eleutherius/btrepl/internal/btrfs"
 	"github.com/eleutherius/btrepl/internal/config"
+	"github.com/eleutherius/btrepl/internal/logbroadcast"
 	"github.com/eleutherius/btrepl/internal/replication"
+	"github.com/eleutherius/btrepl/internal/server"
 	"github.com/eleutherius/btrepl/internal/sshclient"
 	"github.com/eleutherius/btrepl/internal/systemd"
 )
@@ -22,7 +30,9 @@ const (
 var cfgPath string
 
 func main() {
-	log := slog.Default()
+	bc := logbroadcast.New(slog.NewTextHandler(os.Stderr, nil))
+	log := slog.New(bc)
+	slog.SetDefault(log)
 
 	root := &cobra.Command{
 		Use:   "btrepl",
@@ -31,6 +41,7 @@ func main() {
 	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", config.DefaultPath, "config file")
 
 	root.AddCommand(
+		cmdServe(log, bc),
 		cmdInitMaster(log),
 		cmdAddSlave(log),
 		cmdDelSlave(log),
@@ -83,7 +94,12 @@ func cmdInitMaster(log *slog.Logger) *cobra.Command {
 			if err := saveCfg(cfg); err != nil {
 				return err
 			}
-			log.Info("master initialized", "config", cfgPath)
+			if err := systemd.WriteTimer(cfg.Interval); err != nil {
+				log.Warn("write timer unit", "err", err)
+			} else {
+				_ = systemd.DaemonReload()
+			}
+			log.Info("master initialized", "config", cfgPath, "interval", cfg.Interval)
 			return nil
 		},
 	}
@@ -314,6 +330,39 @@ func cmdRun(log *slog.Logger) *cobra.Command {
 			return r.RunCycle()
 		},
 	}
+}
+
+func cmdServe(log *slog.Logger, bc *logbroadcast.Broadcaster) *cobra.Command {
+	var addr string
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start gRPC daemon with internal replication loop",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			lis, err := net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+
+			srv := server.New(cfgPath, log, bc)
+			grpcSrv := grpc.NewServer()
+			pb.RegisterBtreplServer(grpcSrv, srv)
+
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+
+			go srv.RunLoop(ctx)
+
+			go func() {
+				<-ctx.Done()
+				grpcSrv.GracefulStop()
+			}()
+
+			log.Info("gRPC server listening", "addr", addr)
+			return grpcSrv.Serve(lis)
+		},
+	}
+	cmd.Flags().StringVar(&addr, "addr", ":50051", "gRPC listen address")
+	return cmd
 }
 
 func boolStatus(b bool) string {
