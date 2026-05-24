@@ -109,6 +109,42 @@ func (m *Manager) ListSnapshots(subvol string) ([]Snapshot, error) {
 	return snaps, nil
 }
 
+// ListAllSubvolumes scans the snapshot directory and returns unique subvolume
+// names derived from snapshot names matching the configured prefix.
+func (m *Manager) ListAllSubvolumes() ([]string, error) {
+	entries, err := os.ReadDir(m.SnapshotDirPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read snapshot dir: %w", err)
+	}
+
+	seen := make(map[string]bool)
+	var subvols []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, m.prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(name, m.prefix)
+		idx := strings.LastIndex(rest, "_")
+		if idx < 0 {
+			continue
+		}
+		ts := rest[idx+1:]
+		if _, err := time.ParseInLocation(timestampLayout, ts, time.UTC); err != nil {
+			continue
+		}
+		subvol := "@" + rest[:idx]
+		if !seen[subvol] {
+			seen[subvol] = true
+			subvols = append(subvols, subvol)
+		}
+	}
+	return subvols, nil
+}
+
 // SubvolumeExists reports whether path is a btrfs subvolume.
 func (m *Manager) SubvolumeExists(path string) (bool, error) {
 	cmd := exec.Command("btrfs", "subvolume", "show", path)

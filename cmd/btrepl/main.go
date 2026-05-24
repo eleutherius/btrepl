@@ -188,19 +188,25 @@ func cmdStandalone(log *slog.Logger) *cobra.Command {
 		Short: "Detach this node from replication and restore data from latest snapshot",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadCfg()
-			if err != nil {
+			if os.IsNotExist(err) {
+				cfg = config.Default()
+				log.Warn("config not found, using defaults", "btrfs_root", cfg.BtrfsRoot)
+			} else if err != nil {
 				return err
 			}
 
-			if err := systemd.Stop(timerUnit); err != nil {
-				log.Warn("stop timer", "err", err)
-			}
-			if err := systemd.Disable(timerUnit); err != nil {
-				log.Warn("disable timer", "err", err)
-			}
+			_ = systemd.Stop(timerUnit)
+			_ = systemd.Disable(timerUnit)
+			_ = systemd.Stop(serviceUnit)
+			_ = systemd.Disable(serviceUnit)
 
 			bm := newBtrfs(cfg)
-			for _, subvol := range cfg.Subvolumes {
+			subvols := cfg.Subvolumes
+			if len(subvols) == 0 {
+				subvols, _ = bm.ListAllSubvolumes()
+				log.Info("discovered subvolumes from snapshots", "subvols", subvols)
+			}
+			for _, subvol := range subvols {
 				snaps, err := bm.ListSnapshots(subvol)
 				if err != nil || len(snaps) == 0 {
 					log.Warn("no snapshots to restore", "subvol", subvol)
