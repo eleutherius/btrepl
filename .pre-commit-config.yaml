@@ -1,0 +1,27 @@
+repos:
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: .*\.sh$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: end-of-file-fixer # ensures file ends with a newline
+      - id: check-added-large-files # prevents adding large files over 500KB
+      - id: trailing-whitespace # removes trailing whitespace
+
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -w
+        language: system
+        types: [go]
+        files: .*\.go$
+
