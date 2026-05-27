@@ -2,6 +2,7 @@ package sshclient
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -63,27 +64,34 @@ func (c *Client) PipeFrom(localCmd *exec.Cmd, remoteCmd string) error {
 	}
 	defer sess.Close()
 
-	// StdoutPipe is closed automatically by localCmd.Wait(), which signals
-	// EOF to the remote btrfs-receive and lets it finish cleanly.
-	localOut, err := localCmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
+	// Use an explicit io.Pipe so we control when EOF is sent to the remote.
+	// exec.Cmd.StdoutPipe() closes the pipe inside Wait(), which races with
+	// the SSH goroutine still draining buffered data and causes
+	// "read |0: file already closed" on the second subvolume.
+	pr, pw := io.Pipe()
+	localCmd.Stdout = pw
 	localCmd.Stderr = os.Stderr
 
-	sess.Stdin = localOut
+	sess.Stdin = pr
 	sess.Stdout = os.Stdout
 	sess.Stderr = os.Stderr
 
 	if err := sess.Start(remoteCmd); err != nil {
+		pr.Close()
+		pw.Close()
 		return fmt.Errorf("start remote %q: %w", remoteCmd, err)
 	}
 	if err := localCmd.Start(); err != nil {
+		pr.Close()
+		pw.Close()
 		sess.Wait() //nolint:errcheck
 		return fmt.Errorf("start local cmd: %w", err)
 	}
 
 	localErr := localCmd.Wait()
+	// Closing pw signals EOF to the SSH goroutine reading pr, letting
+	// btrfs-receive on the remote side finish cleanly before sess.Wait().
+	pw.CloseWithError(localErr)
 	remoteErr := sess.Wait()
 
 	if localErr != nil {
