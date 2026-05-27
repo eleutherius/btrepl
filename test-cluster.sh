@@ -67,8 +67,7 @@ if [[ "${1:-}" == "--clean" ]]; then
     for m in "$MASTER" "$SLAVE"; do
         if machine_exists "$m"; then
             log "Deleting $m..."
-            orbctl stop "$m" 2>/dev/null || true
-            orbctl delete "$m"
+            orbctl delete -f "$m"
         fi
     done
 fi

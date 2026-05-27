@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "btrepl"
+version = "0.1.0"
+description = "Python gRPC client for the btrepl daemon"
+requires-python = ">=3.11"
+dependencies = [
+    "grpcio>=1.60",
+    "protobuf>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["grpcio-tools>=1.60"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["btrepl*"]

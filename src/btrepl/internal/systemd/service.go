@@ -32,7 +32,7 @@ func ctl(args ...string) error {
 	return nil
 }
 
-func DaemonReload() error        { return ctl("daemon-reload") }
+func DaemonReload() error       { return ctl("daemon-reload") }
 func Enable(unit string) error  { return ctl("enable", unit) }
 func Disable(unit string) error { return ctl("disable", unit) }
 func Start(unit string) error   { return ctl("start", unit) }

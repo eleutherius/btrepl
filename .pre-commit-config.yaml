@@ -24,4 +24,3 @@ repos:
         language: system
         types: [go]
         files: .*\.go$
-
