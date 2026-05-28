@@ -12,7 +12,9 @@ PROTO_SRC   := $(GO_ROOT)/api/btrepl.proto
 PROTO_GO    := $(GO_ROOT)/api/btrepl.pb.go $(GO_ROOT)/api/btrepl_grpc.pb.go
 PROTO_PY    := src/pybtrepl/btrepl/_pb/btrepl_pb2.py src/pybtrepl/btrepl/_pb/btrepl_pb2_grpc.py
 
-.PHONY: all proto proto-go proto-py build deb clean
+.PHONY: all proto proto-go proto-py build deb clean \
+        test-integration test-integration-clean \
+        cluster-up cluster-down
 
 all: deb
 
@@ -72,3 +74,33 @@ $(BUILD_DIR)/$(BINARY)_$(VERSION)_%.deb: $(BUILD_DIR)/bin/$(BINARY)_linux_%
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# ── Cluster lifecycle ──────────────────────────────────────────────────────────
+
+# Create/start the 4-node OrbStack cluster (1 master + 3 slaves).
+cluster-up: deb
+	uv run python -c \
+	    "import sys; sys.path.insert(0,'tests/integration'); \
+	     from conftest import _setup_cluster; _setup_cluster()"
+
+# Destroy all cluster VMs.
+cluster-down:
+	uv run python -c \
+	    "import sys; sys.path.insert(0,'tests/integration'); \
+	     from conftest import _teardown_cluster; _teardown_cluster()"
+
+# ── Integration tests ──────────────────────────────────────────────────────────
+
+# Run tests against an already-running cluster.
+test-integration:
+	uv run pytest tests/integration/ -v
+
+# Spin up, test, leave running.
+test-integration-up: deb
+	uv pip install -q -e .
+	uv run pytest tests/integration/ -v --spin-up
+
+# Spin up, test, destroy.
+test-integration-clean: deb
+	uv pip install -q -e .
+	uv run pytest tests/integration/ -v --spin-up --teardown

@@ -3,22 +3,19 @@ requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "btrepl"
-version = "0.1.0"
-description = "Python gRPC client for the btrepl daemon"
+name = "btrepl-dev"
+version = "0.0.0"
 requires-python = ">=3.11"
 dependencies = [
     "grpcio>=1.60",
     "protobuf>=5.0",
-]
-
-[project.optional-dependencies]
-dev = ["grpcio-tools>=1.60"]
-test = [
     "pytest>=8.0",
     "pytest-timeout>=2.3",
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src/pybtrepl"]
 include = ["btrepl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/integration"]

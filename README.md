@@ -23,13 +23,13 @@ When a slave needs to take over, `btrepl standalone` promotes the latest snapsho
 ## Installation
 
 ```bash
-go install github.com/liakhov/btrepl/cmd/btrepl@latest
+go install github.com/eleutherius/btrepl/cmd/btrepl@latest
 ```
 
 Or build locally:
 
 ```bash
-git clone https://github.com/liakhov/btrepl
+git clone https://github.com/eleutherius/btrepl
 cd btrepl
 go build -o /usr/local/bin/btrepl ./cmd/btrepl
 ```
