@@ -1,0 +1,19 @@
+site_name: btrepl
+site_url: https://eleutherius.github.io/btrepl/
+repo_url: https://github.com/eleutherius/btrepl
+edit_uri: edit/main/docs/
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+    - search.suggest
+  palette:
+    - scheme: default
+      toggle: { icon: material/brightness-7, name: Dark }
+    - scheme: slate
+      toggle: { icon: material/brightness-4, name: Light }
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
