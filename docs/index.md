@@ -105,7 +105,7 @@ service Btrepl {
 }
 ```
 
-Full definition: [`api/btrepl.proto`](api/btrepl.proto)
+Full definition: [`api/btrepl.proto`](https://github.com/eleutherius/btrepl/blob/main/src/btrepl/api/btrepl.proto)
 
 ### Python example
 
