@@ -1,5 +1,5 @@
 BINARY  := btrepl
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^[^0-9]/0.0.0+&/' || echo "0.0.1")
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed -e 's/^v//' -e 's/^[^0-9]/0.0.0+&/' || echo "0.0.1")
 ARCHS   := amd64 arm64
 
 GO_ROOT  := src/btrepl
