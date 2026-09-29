@@ -6,13 +6,16 @@ GO_ROOT  := src/btrepl
 BUILD_DIR := build
 DEB_MAINTAINER := Oleksandr Liakhov <eleutherius69@gmail.com>
 DEB_DESCRIPTION := btrfs snapshot replication tool
+# rpm forbids '-' in Version, so git-describe suffixes become dot-separated.
+RPM_VERSION := $(subst -,.,$(VERSION))
+NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 
 GO_SOURCES := $(shell find $(GO_ROOT) -name '*.go' -not -path './.git/*')
 PROTO_SRC   := $(GO_ROOT)/api/btrepl.proto
 PROTO_GO    := $(GO_ROOT)/api/btrepl.pb.go $(GO_ROOT)/api/btrepl_grpc.pb.go
 PROTO_PY    := src/pybtrepl/btrepl/_pb/btrepl_pb2.py src/pybtrepl/btrepl/_pb/btrepl_pb2_grpc.py
 
-.PHONY: all proto proto-go proto-py build deb clean \
+.PHONY: all proto proto-go proto-py build deb rpm packages clean \
         test-integration test-integration-clean \
         cluster-up cluster-down
 
@@ -71,6 +74,17 @@ $(BUILD_DIR)/$(BINARY)_$(VERSION)_%.deb: $(BUILD_DIR)/bin/$(BINARY)_linux_%
 
 	dpkg-deb --build --root-owner-group $(PKG) $@
 	@echo "built: $@"
+
+rpm: build $(foreach arch,$(ARCHS),$(BUILD_DIR)/$(BINARY)_$(VERSION)_$(arch).rpm)
+
+$(BUILD_DIR)/$(BINARY)_$(VERSION)_%.rpm: $(BUILD_DIR)/bin/$(BINARY)_linux_% $(GO_ROOT)/deploy/rpm/nfpm.yaml
+	@mkdir -p $(BUILD_DIR)/pkg
+	@sed -e 's/@VERSION@/$(RPM_VERSION)/' -e 's/@ARCH@/$*/g' \
+		$(GO_ROOT)/deploy/rpm/nfpm.yaml > $(BUILD_DIR)/pkg/nfpm_$*.yaml
+	$(NFPM) package --config $(BUILD_DIR)/pkg/nfpm_$*.yaml --packager rpm --target $@
+	@echo "built: $@"
+
+packages: deb rpm
 
 clean:
 	rm -rf $(BUILD_DIR)
