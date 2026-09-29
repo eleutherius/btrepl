@@ -19,6 +19,10 @@ README install/build paths such as `./cmd/btrepl` and `api/btrepl.proto` date fr
 make build
 # Build .deb packages into build/ (this is also the default `make` target)
 make deb
+# Build .rpm packages into build/ (nfpm via `go run`, config in src/btrepl/deploy/rpm/)
+make rpm
+# Both; this is what .github/workflows/release.yml runs on a v* tag
+make packages
 # Quick local compile/vet
 go -C src/btrepl build ./...
 go -C src/btrepl vet ./...

@@ -1,0 +1,26 @@
+# nfpm config for the .rpm package, driven by `make rpm`.
+# @VERSION@ and @ARCH@ are substituted by the Makefile.
+name: btrepl
+version: "@VERSION@"
+version_schema: none
+release: 1
+arch: "@ARCH@"
+platform: linux
+maintainer: Oleksandr Liakhov <eleutherius69@gmail.com>
+description: btrfs snapshot replication tool
+homepage: https://github.com/eleutherius/btrepl
+license: MIT
+
+contents:
+  - src: build/bin/btrepl_linux_@ARCH@
+    dst: /usr/local/bin/btrepl
+    file_info:
+      mode: 0755
+  - src: src/btrepl/deploy/btrepl.service
+    dst: /usr/lib/systemd/system/btrepl.service
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: src/btrepl/deploy/rpm/postinstall.sh
+  preremove: src/btrepl/deploy/rpm/preremove.sh
