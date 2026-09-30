@@ -26,3 +26,4 @@ nav:
   - Systemd setup: systemd.md
   - gRPC API: grpc.md
   - Failover: failover.md
+  - Comparison: comparison.md

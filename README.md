@@ -48,6 +48,7 @@ The master needs key-based root SSH access to each slave, and `btrfs-progs` on b
 | [Systemd setup](./docs/systemd.md) | Daemon mode and timer mode |
 | [gRPC API](./docs/grpc.md) | Proto and a Python client example |
 | [Failover](./docs/failover.md) | Promote a slave to a standalone node |
+| [Comparison](./docs/comparison.md) | btrepl vs btrbk and snapper |
 
 ## Repository layout
 

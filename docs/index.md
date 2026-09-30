@@ -39,6 +39,7 @@ If no common snapshot exists, a full send is performed automatically.
 - [Getting started](getting-started.md)
 - [Configuration](configuration.md)
 - [Commands](commands.md)
+- [Comparison with btrbk and snapper](comparison.md)
 
 ## License
 
