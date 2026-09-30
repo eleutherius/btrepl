@@ -4,6 +4,7 @@
 
 - Linux with btrfs
 - `btrfs-progs` installed on master **and** slaves
+- On every node, `btrfs_root` (default `/btrfs`) must be a mount point of the **top level** of a btrfs filesystem (`subvolid=5`), not a directory on the root filesystem or a mounted subvolume. Incremental `btrfs receive` cannot find the parent snapshot otherwise. `init-master` and `add-slave` check this. Check it yourself with `findmnt -no FSTYPE,OPTIONS /btrfs`: it should print `btrfs` and `subvol=/`.
 - Passwordless SSH access from master to each slave (key-based, default: `/root/.ssh/id_ed25519`)
 - Go 1.21+ to build from source
 

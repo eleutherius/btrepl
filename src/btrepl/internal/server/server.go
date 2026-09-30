@@ -139,8 +139,7 @@ func (s *Server) AddSlave(_ context.Context, req *pb.SlaveRequest) (*pb.SlaveRes
 	}
 	defer ssh.Close()
 
-	snapDir := cfg.BtrfsRoot + "/" + cfg.SnapshotDir
-	if _, err := ssh.Run("mkdir -p " + snapDir); err != nil {
+	if err := replication.PrepareSlave(ssh, cfg); err != nil {
 		return &pb.SlaveResponse{Ok: false, Error: err.Error()}, nil
 	}
 

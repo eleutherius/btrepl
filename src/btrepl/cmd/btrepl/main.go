@@ -73,7 +73,8 @@ func newBtrfs(cfg *config.Config) *btrfs.Manager {
 // --- commands ----------------------------------------------------------------
 
 func cmdInitMaster(log *slog.Logger) *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "init-master",
 		Short: "Initialize this node as replication master",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -85,6 +86,12 @@ func cmdInitMaster(log *slog.Logger) *cobra.Command {
 			}
 
 			bm := newBtrfs(cfg)
+			if err := bm.CheckRoot(); err != nil {
+				if !force {
+					return fmt.Errorf("%w (use --force to skip this check)", err)
+				}
+				log.Warn("btrfs root check skipped", "err", err)
+			}
 			if err := bm.EnsureSnapshotDir(); err != nil {
 				return err
 			}
@@ -103,6 +110,8 @@ func cmdInitMaster(log *slog.Logger) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "skip the check that btrfs_root is the top level of a btrfs mount")
+	return cmd
 }
 
 func cmdAddSlave(log *slog.Logger) *cobra.Command {
@@ -122,9 +131,7 @@ func cmdAddSlave(log *slog.Logger) *cobra.Command {
 			}
 			defer ssh.Close()
 
-			// Ensure snapshot dir exists on slave.
-			snapDir := cfg.BtrfsRoot + "/" + cfg.SnapshotDir
-			if _, err := ssh.Run("mkdir -p " + snapDir); err != nil {
+			if err := replication.PrepareSlave(ssh, cfg); err != nil {
 				return fmt.Errorf("prepare slave: %w", err)
 			}
 

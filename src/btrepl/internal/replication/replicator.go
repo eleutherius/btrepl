@@ -50,9 +50,8 @@ func (r *Replicator) replicateSlave(slaveIP string) error {
 	}
 	defer ssh.Close()
 
-	remoteSnapDir := filepath.Join(r.cfg.BtrfsRoot, r.cfg.SnapshotDir)
-	if _, err := ssh.Run("mkdir -p " + remoteSnapDir); err != nil {
-		return fmt.Errorf("prepare slave snapshot dir: %w", err)
+	if err := PrepareSlave(ssh, r.cfg); err != nil {
+		return err
 	}
 
 	var lastErr error
@@ -63,6 +62,23 @@ func (r *Replicator) replicateSlave(slaveIP string) error {
 		}
 	}
 	return lastErr
+}
+
+// PrepareSlave checks that btrfs_root on the slave is the top level of a
+// btrfs filesystem and creates the snapshot directory there.
+func PrepareSlave(ssh *sshclient.Client, cfg *config.Config) error {
+	mountinfo, err := ssh.Run("cat /proc/self/mountinfo")
+	if err != nil {
+		return fmt.Errorf("read slave mountinfo: %w", err)
+	}
+	if err := btrfs.CheckMountInfo(mountinfo, cfg.BtrfsRoot); err != nil {
+		return fmt.Errorf("slave: %w", err)
+	}
+	snapDir := filepath.Join(cfg.BtrfsRoot, cfg.SnapshotDir)
+	if _, err := ssh.Run("mkdir -p " + snapDir); err != nil {
+		return fmt.Errorf("prepare slave snapshot dir: %w", err)
+	}
+	return nil
 }
 
 func (r *Replicator) replicateSubvol(ssh *sshclient.Client, slaveIP, subvol string) error {
