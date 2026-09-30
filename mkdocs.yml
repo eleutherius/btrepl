@@ -17,3 +17,12 @@ markdown_extensions:
   - admonition
   - pymdownx.highlight
   - pymdownx.superfences
+nav:
+  - Introduction: index.md
+  - Installation: installation.md
+  - Getting started: getting-started.md
+  - Configuration: configuration.md
+  - Commands: commands.md
+  - Systemd setup: systemd.md
+  - gRPC API: grpc.md
+  - Failover: failover.md
