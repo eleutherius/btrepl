@@ -82,6 +82,14 @@ func PrepareSlave(ssh *sshclient.Client, cfg *config.Config) error {
 }
 
 func (r *Replicator) replicateSubvol(ssh *sshclient.Client, slaveIP, subvol string) error {
+	created, err := r.btrfs.EnsureSubvolume(subvol)
+	if err != nil {
+		return fmt.Errorf("ensure subvolume: %w", err)
+	}
+	if created {
+		r.log.Warn("subvolume was missing, created an empty one", "subvol", subvol, "path", r.btrfs.SubvolPath(subvol))
+	}
+
 	snap, err := r.btrfs.CreateSnapshot(subvol)
 	if err != nil {
 		return fmt.Errorf("create snapshot: %w", err)

@@ -167,6 +167,29 @@ func (m *Manager) CreateSubvolume(path string) error {
 	return nil
 }
 
+// EnsureSubvolume creates the configured subvolume under root if nothing
+// exists at its path. It reports whether the subvolume was created and fails
+// if the path exists but is not a subvolume.
+func (m *Manager) EnsureSubvolume(subvol string) (bool, error) {
+	path := m.SubvolPath(subvol)
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		if err := m.CreateSubvolume(path); err != nil {
+			return false, err
+		}
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+	exists, err := m.SubvolumeExists(path)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, fmt.Errorf("%s exists but is not a btrfs subvolume: create a subvolume and move the data into it", path)
+	}
+	return false, nil
+}
+
 // DeleteSubvolume deletes the subvolume at path if it exists.
 func (m *Manager) DeleteSubvolume(path string) error {
 	exists, err := m.SubvolumeExists(path)

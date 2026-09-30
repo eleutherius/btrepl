@@ -95,6 +95,14 @@ func cmdInitMaster(log *slog.Logger) *cobra.Command {
 			if err := bm.EnsureSnapshotDir(); err != nil {
 				return err
 			}
+			for _, subvol := range cfg.Subvolumes {
+				created, err := bm.EnsureSubvolume(subvol)
+				if err != nil {
+					log.Warn("subvolume not ready", "subvol", subvol, "err", err)
+				} else if created {
+					log.Info("subvolume created", "subvol", subvol, "path", bm.SubvolPath(subvol))
+				}
+			}
 			if err := bm.EnableQuota(); err != nil {
 				log.Warn("enable btrfs quota failed", "err", err)
 			}
