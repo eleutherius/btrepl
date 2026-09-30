@@ -32,7 +32,7 @@ func Default() *Config {
 		Interval:       "1h",
 		KeepSender:     428,
 		KeepReceiver:   10,
-		Subvolumes:     []string{"@eventsPictures", "@reports"},
+		Subvolumes:     []string{"@data", "@postgres"},
 		Slaves:         []string{},
 	}
 }
