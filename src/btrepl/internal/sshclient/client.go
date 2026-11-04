@@ -3,7 +3,6 @@ package sshclient
 import (
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,29 +14,48 @@ import (
 type Client struct {
 	host   string
 	client *ssh.Client
+	// NewHostKey is the SHA256 fingerprint of the host key that New recorded
+	// in the known_hosts file, or "" if the host was already known.
+	NewHostKey string
 }
 
-func New(host, user, keyPath string) (*Client, error) {
-	key, err := os.ReadFile(keyPath)
+// Config holds what New needs besides the address.
+type Config struct {
+	User       string
+	KeyPath    string
+	KnownHosts string
+	// TrustNewHostKey records the key of a host that is not in KnownHosts
+	// instead of refusing the connection. A changed key is always refused.
+	TrustNewHostKey bool
+}
+
+// New connects to addr (host:port) with key authentication and verifies the
+// host key against the known_hosts file.
+func New(addr string, cfg Config) (*Client, error) {
+	key, err := os.ReadFile(cfg.KeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("read ssh key %s: %w", keyPath, err)
+		return nil, fmt.Errorf("read ssh key %s: %w", cfg.KeyPath, err)
 	}
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("parse ssh key: %w", err)
 	}
-	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
-		Timeout:         10 * time.Second,
+	check, err := newHostKeyCheck(cfg.KnownHosts, cfg.TrustNewHostKey)
+	if err != nil {
+		return nil, err
 	}
-	addr := net.JoinHostPort(host, "22")
-	c, err := ssh.Dial("tcp", addr, cfg)
+	sshCfg := &ssh.ClientConfig{
+		User:              cfg.User,
+		Auth:              []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback:   check.callback,
+		HostKeyAlgorithms: check.algorithms(addr),
+		Timeout:           10 * time.Second,
+	}
+	c, err := ssh.Dial("tcp", addr, sshCfg)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
-	return &Client{host: host, client: c}, nil
+	return &Client{host: addr, client: c, NewHostKey: check.recorded}, nil
 }
 
 // Run executes cmd on the remote host and returns combined output.
@@ -101,17 +119,6 @@ func (c *Client) PipeFrom(localCmd *exec.Cmd, remoteCmd string) error {
 		return fmt.Errorf("btrfs receive on %s: %w", c.host, remoteErr)
 	}
 	return nil
-}
-
-// Quote returns s quoted as a single word for a POSIX shell.
-func Quote(s string) string {
-	safe := s != "" && strings.IndexFunc(s, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./_-", r))
-	}) < 0
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (c *Client) Close() error {

@@ -3,36 +3,59 @@ package replication
 import (
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/eleutherius/btrepl/internal/btrfs"
 	"github.com/eleutherius/btrepl/internal/config"
+	"github.com/eleutherius/btrepl/internal/remote"
 	"github.com/eleutherius/btrepl/internal/sshclient"
 )
 
 type Replicator struct {
-	cfg   *config.Config
-	btrfs *btrfs.Manager
-	log   *slog.Logger
+	cfg      *config.Config
+	btrfs    *btrfs.Manager
+	cmds     remote.Commands
+	log      *slog.Logger
+	lockPath string
 }
 
 func New(cfg *config.Config, log *slog.Logger) *Replicator {
 	bm := btrfs.NewManager(cfg.BtrfsRoot, cfg.SnapshotDir, cfg.SnapshotPrefix)
-	return &Replicator{cfg: cfg, btrfs: bm, log: log}
+	return &Replicator{
+		cfg: cfg, btrfs: bm, log: log,
+		cmds:     remote.New(cfg.BtrfsRoot, cfg.SnapshotDir),
+		lockPath: LockPath,
+	}
+}
+
+// Dial connects to a slave. With trustNewHostKey the slave's host key is
+// recorded in ssh_known_hosts if it is not there yet (add-slave); otherwise
+// the key must already be there.
+func Dial(cfg *config.Config, slave string, trustNewHostKey bool) (*sshclient.Client, error) {
+	return sshclient.New(cfg.SlaveAddr(slave), sshclient.Config{
+		User:            cfg.SSHUser,
+		KeyPath:         cfg.SSHIdentity,
+		KnownHosts:      cfg.SSHKnownHosts,
+		TrustNewHostKey: trustNewHostKey,
+	})
 }
 
 // RunCycle runs one cycle in three phases: take one snapshot of every
 // subvolume, send the newest snapshot to every slave, then prune local
 // snapshots while keeping the last common snapshot with each slave. A failure
 // for one slave or subvolume is logged and the cycle goes on; the last error
-// is returned.
+// is returned. Only one cycle runs at a time on a host: while another holds
+// the lock, RunCycle returns ErrCycleRunning.
 func (r *Replicator) RunCycle() error {
 	if len(r.cfg.Slaves) == 0 {
 		r.log.Info("no slaves configured, nothing to replicate")
 		return nil
 	}
+	unlock, err := lock(r.lockPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	var lastErr error
 
 	for _, subvol := range r.cfg.Subvolumes {
@@ -98,7 +121,7 @@ func (r *Replicator) snapshot(subvol string) error {
 }
 
 func (r *Replicator) replicateSlave(slave string, local map[string][]btrfs.Snapshot, cur cursors) error {
-	ssh, err := sshclient.New(slave, r.cfg.SSHUser, r.cfg.SSHIdentity)
+	ssh, err := Dial(r.cfg, slave, false)
 	if err != nil {
 		return fmt.Errorf("connect %s: %w", slave, err)
 	}
@@ -107,7 +130,7 @@ func (r *Replicator) replicateSlave(slave string, local map[string][]btrfs.Snaps
 	if err := PrepareSlave(ssh, r.cfg); err != nil {
 		return err
 	}
-	infos, err := listRemoteSubvolumes(ssh, r.cfg.BtrfsRoot)
+	infos, err := listRemoteSubvolumes(ssh, r.cmds)
 	if err != nil {
 		return err
 	}
@@ -126,15 +149,15 @@ func (r *Replicator) replicateSlave(slave string, local map[string][]btrfs.Snaps
 // PrepareSlave checks that btrfs_root on the slave is the top level of a
 // btrfs filesystem and creates the snapshot directory there.
 func PrepareSlave(ssh *sshclient.Client, cfg *config.Config) error {
-	mountinfo, err := ssh.Run("cat /proc/self/mountinfo")
+	cmds := remote.New(cfg.BtrfsRoot, cfg.SnapshotDir)
+	mountinfo, err := ssh.Run(cmds.MountInfo())
 	if err != nil {
 		return fmt.Errorf("read slave mountinfo: %w", err)
 	}
 	if err := btrfs.CheckMountInfo(mountinfo, cfg.BtrfsRoot); err != nil {
 		return fmt.Errorf("slave: %w", err)
 	}
-	snapDir := filepath.Join(cfg.BtrfsRoot, cfg.SnapshotDir)
-	if _, err := ssh.Run("mkdir -p " + snapDir); err != nil {
+	if _, err := ssh.Run(cmds.MkdirSnapshotDir()); err != nil {
 		return fmt.Errorf("prepare slave snapshot dir: %w", err)
 	}
 	return nil
@@ -145,7 +168,7 @@ func (r *Replicator) replicateSubvol(ssh *sshclient.Client, slave, subvol string
 	for _, g := range garbage {
 		r.log.Warn("deleting incomplete snapshot on slave (interrupted receive?)",
 			"snap", g.Name, "slave", slave, "read_only", g.ReadOnly, "received_uuid", g.ReceivedUUID)
-		if err := deleteRemote(ssh, g); err != nil {
+		if _, err := ssh.Run(r.cmds.Delete(g.Name)); err != nil {
 			r.log.Warn("delete remote snapshot", "snap", g.Name, "slave", slave, "err", err)
 		}
 	}
@@ -166,8 +189,7 @@ func (r *Replicator) replicateSubvol(ssh *sshclient.Client, slave, subvol string
 		r.log.Info("slave is up to date", "snap", latest.Name, "slave", slave)
 	} else {
 		r.log.Info("sending", "snap", latest.Name, "parent", snapName(parent), "slave", slave)
-		remoteSnapDir := filepath.Join(r.cfg.BtrfsRoot, r.cfg.SnapshotDir)
-		if err := ssh.PipeFrom(r.btrfs.SendCmd(*latest, parent), "btrfs receive "+sshclient.Quote(remoteSnapDir)); err != nil {
+		if err := ssh.PipeFrom(r.btrfs.SendCmd(*latest, parent), r.cmds.Receive()); err != nil {
 			return fmt.Errorf("send %s: %w", latest.Name, err)
 		}
 		cur.set(slave, subvol, *latest)
@@ -177,7 +199,7 @@ func (r *Replicator) replicateSubvol(ssh *sshclient.Client, slave, subvol string
 	}
 
 	for _, s := range planRemotePrune(complete, r.cfg.KeepReceiver) {
-		if err := deleteRemote(ssh, s); err != nil {
+		if _, err := ssh.Run(r.cmds.Delete(s.Name)); err != nil {
 			r.log.Warn("delete remote snapshot", "snap", s.Name, "slave", slave, "err", err)
 		} else {
 			r.log.Info("pruned remote snapshot", "snap", s.Name, "slave", slave)
@@ -217,32 +239,22 @@ func (r *Replicator) maxAnchorAge() time.Duration {
 }
 
 // listRemoteSubvolumes lists every subvolume of the slave's filesystem.
-func listRemoteSubvolumes(ssh *sshclient.Client, root string) ([]btrfs.SubvolInfo, error) {
-	all, err := ssh.Run(btrfsCmd(btrfs.ListAllArgs, root))
+func listRemoteSubvolumes(ssh *sshclient.Client, cmds remote.Commands) ([]btrfs.SubvolInfo, error) {
+	all, err := ssh.Run(cmds.ListSubvolumes())
 	if err != nil {
 		return nil, fmt.Errorf("list remote subvolumes: %w", err)
 	}
-	ro, err := ssh.Run(btrfsCmd(btrfs.ListReadOnlyArgs, root))
+	ro, err := ssh.Run(cmds.ListReadOnly())
 	if err != nil {
 		return nil, fmt.Errorf("list remote subvolumes: %w", err)
 	}
 	return btrfs.ParseSubvolumeList(all, ro)
 }
 
-func deleteRemote(ssh *sshclient.Client, s btrfs.Snapshot) error {
-	_, err := ssh.Run(btrfsCmd([]string{"subvolume", "delete"}, s.AbsPath))
-	return err
-}
-
-// btrfsCmd builds a remote btrfs command line with the path quoted.
-func btrfsCmd(args []string, path string) string {
-	return "btrfs " + strings.Join(args, " ") + " " + sshclient.Quote(path)
-}
-
 // LatestReceivedSnapshot returns the path of the newest complete received
 // snapshot of subvol on the slave, or "" if there is none.
 func (r *Replicator) LatestReceivedSnapshot(ssh *sshclient.Client, subvol string) (string, error) {
-	infos, err := listRemoteSubvolumes(ssh, r.cfg.BtrfsRoot)
+	infos, err := listRemoteSubvolumes(ssh, r.cmds)
 	if err != nil {
 		return "", err
 	}

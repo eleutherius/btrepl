@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -16,9 +17,9 @@ import (
 	"github.com/eleutherius/btrepl/internal/btrfs"
 	"github.com/eleutherius/btrepl/internal/config"
 	"github.com/eleutherius/btrepl/internal/logbroadcast"
+	"github.com/eleutherius/btrepl/internal/remote"
 	"github.com/eleutherius/btrepl/internal/replication"
 	"github.com/eleutherius/btrepl/internal/server"
-	"github.com/eleutherius/btrepl/internal/sshclient"
 	"github.com/eleutherius/btrepl/internal/systemd"
 )
 
@@ -49,6 +50,7 @@ func main() {
 		cmdClear(log),
 		cmdStatus(log),
 		cmdRun(log),
+		cmdSSHFilter(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -133,11 +135,14 @@ func cmdAddSlave(log *slog.Logger) *cobra.Command {
 				return err
 			}
 
-			ssh, err := sshclient.New(slaveIP, cfg.SSHUser, cfg.SSHIdentity)
+			ssh, err := replication.Dial(cfg, slaveIP, true)
 			if err != nil {
 				return fmt.Errorf("connect to slave: %w", err)
 			}
 			defer ssh.Close()
+			if ssh.NewHostKey != "" {
+				log.Info("recorded slave host key", "slave", slaveIP, "fingerprint", ssh.NewHostKey, "known_hosts", cfg.SSHKnownHosts)
+			}
 
 			if err := replication.PrepareSlave(ssh, cfg); err != nil {
 				return fmt.Errorf("prepare slave: %w", err)
@@ -159,7 +164,7 @@ func cmdAddSlave(log *slog.Logger) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&slaveIP, "server", "s", "", "slave IP or hostname")
+	cmd.Flags().StringVarP(&slaveIP, "server", "s", "", "slave IP or hostname, optionally with :port")
 	_ = cmd.MarkFlagRequired("server")
 	return cmd
 }
@@ -318,7 +323,7 @@ func cmdStatus(log *slog.Logger) *cobra.Command {
 			}
 
 			if slaveIP != "" {
-				ssh, err := sshclient.New(slaveIP, cfg.SSHUser, cfg.SSHIdentity)
+				ssh, err := replication.Dial(cfg, slaveIP, false)
 				if err != nil {
 					log.Warn("connect to slave for status", "slave", slaveIP, "err", err)
 					return nil
@@ -400,6 +405,39 @@ func latestReceived(snaps []btrfs.Snapshot, skip func(btrfs.Snapshot)) *btrfs.Sn
 		skip(snaps[i])
 	}
 	return nil
+}
+
+func cmdSSHFilter() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ssh-filter",
+		Short: "Forced SSH command for a slave: allow only the commands btrepl runs there",
+		Long: `Restricts the master's key on a slave to the commands btrepl runs there.
+Put it in front of the key in the slave's authorized_keys:
+
+  restrict,command="/usr/local/bin/btrepl ssh-filter" ssh-ed25519 AAAA... root@master
+
+btrfs_root and snapshot_dir are read from the slave's config (-c), or the
+defaults if there is none. Other commands are refused.`,
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadCfg()
+			if os.IsNotExist(err) {
+				cfg = config.Default()
+			} else if err != nil {
+				return err
+			}
+			argv, err := remote.New(cfg.BtrfsRoot, cfg.SnapshotDir).Allow(os.Getenv("SSH_ORIGINAL_COMMAND"))
+			if err != nil {
+				return err
+			}
+			path, err := exec.LookPath(argv[0])
+			if err != nil {
+				return err
+			}
+			return syscall.Exec(path, argv, os.Environ())
+		},
+	}
 }
 
 func boolStatus(b bool) string {

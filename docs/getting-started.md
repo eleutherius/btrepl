@@ -20,6 +20,8 @@ vim /etc/btrepl/config.yaml
 btrfs_root: /btrfs
 ssh_identity: /root/.ssh/id_ed25519
 ssh_user: root
+ssh_port: 22
+ssh_known_hosts: /root/.ssh/known_hosts
 snapshot_dir: .snapshots
 snapshot_prefix: btrepl_
 keep_sender: 428       # snapshots to keep on master
@@ -36,7 +38,8 @@ slaves: []             # managed by add-slave / del-slave
 btrepl add-slave -s 192.168.1.10
 ```
 
-- Connects to the slave via SSH, creates the snapshot directory.
+- Connects to the slave via SSH and records its host key in `ssh_known_hosts` if it is new (see [SSH access](ssh.md)).
+- Creates the snapshot directory.
 - Adds the slave to the config.
 - Enables and starts `btrepl.timer` (see [Systemd setup](systemd.md)).
 
