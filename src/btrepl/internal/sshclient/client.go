@@ -103,19 +103,15 @@ func (c *Client) PipeFrom(localCmd *exec.Cmd, remoteCmd string) error {
 	return nil
 }
 
-// ListDir returns names of entries in dir on the remote host.
-func (c *Client) ListDir(dir string) ([]string, error) {
-	out, err := c.Run(fmt.Sprintf("ls -1 %s 2>/dev/null || true", dir))
-	if err != nil || out == "" {
-		return nil, err
+// Quote returns s quoted as a single word for a POSIX shell.
+func Quote(s string) string {
+	safe := s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%+=:,./_-", r))
+	}) < 0
+	if safe {
+		return s
 	}
-	var result []string
-	for _, line := range strings.Split(out, "\n") {
-		if l := strings.TrimSpace(line); l != "" {
-			result = append(result, l)
-		}
-	}
-	return result, nil
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (c *Client) Close() error {

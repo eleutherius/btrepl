@@ -24,3 +24,9 @@ repos:
         language: system
         types: [go]
         files: .*\.go$
+      - id: go-test
+        name: go test
+        entry: go -C src/btrepl test ./...
+        language: system
+        types: [go]
+        pass_filenames: false

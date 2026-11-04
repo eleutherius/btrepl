@@ -18,6 +18,7 @@ type Config struct {
 	Interval       string   `yaml:"interval"`
 	KeepSender     int      `yaml:"keep_sender"`
 	KeepReceiver   int      `yaml:"keep_receiver"`
+	MaxAnchorAge   string   `yaml:"max_anchor_age"`
 	Subvolumes     []string `yaml:"subvolumes"`
 	Slaves         []string `yaml:"slaves"`
 }
