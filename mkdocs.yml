@@ -22,6 +22,7 @@ nav:
   - Installation: installation.md
   - Getting started: getting-started.md
   - Configuration: configuration.md
+  - SSH access: ssh.md
   - Commands: commands.md
   - Systemd setup: systemd.md
   - gRPC API: grpc.md

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"github.com/eleutherius/btrepl/internal/config"
 	"github.com/eleutherius/btrepl/internal/logbroadcast"
 	"github.com/eleutherius/btrepl/internal/replication"
-	"github.com/eleutherius/btrepl/internal/sshclient"
 	"github.com/eleutherius/btrepl/internal/systemd"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,42 +31,75 @@ type Server struct {
 
 	mu    sync.Mutex
 	runCh chan struct{}
+
+	// reloadEvery is how often RunLoop re-reads interval from the config.
+	reloadEvery time.Duration
+	// runCycle runs one replication cycle; tests replace it.
+	runCycle func()
+	// badInterval is the last invalid interval value that was logged.
+	badInterval string
 }
 
 func New(cfgPath string, log *slog.Logger, bc *logbroadcast.Broadcaster) *Server {
-	return &Server{
-		cfgPath:   cfgPath,
-		log:       log,
-		broadcast: bc,
-		runCh:     make(chan struct{}, 1),
+	s := &Server{
+		cfgPath:     cfgPath,
+		log:         log,
+		broadcast:   bc,
+		runCh:       make(chan struct{}, 1),
+		reloadEvery: time.Minute,
 	}
+	s.runCycle = s.doRun
+	return s
 }
 
-// RunLoop starts the daemon replication loop. Blocks until ctx is cancelled.
+// RunLoop runs a replication cycle every interval until ctx is cancelled.
+// The interval is re-read from the config after every cycle and every
+// reloadEvery, so a change takes effect without restarting the daemon.
 func (s *Server) RunLoop(ctx context.Context) {
-	cfg, err := config.Load(s.cfgPath)
-	if err != nil {
-		s.log.Error("load config", "err", err)
-		return
-	}
-
-	interval := parseDuration(cfg.Interval, time.Hour)
+	interval := s.interval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	reload := time.NewTicker(s.reloadEvery)
+	defer reload.Stop()
 
-	s.log.Info("daemon started", "interval", cfg.Interval, "addr", ":50051")
+	s.log.Info("daemon started", "interval", interval)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.doRun()
+			s.runCycle()
 		case <-s.runCh:
-			s.doRun()
+			s.runCycle()
+			ticker.Reset(interval)
+		case <-reload.C:
+		}
+		if d := s.interval(); d != interval {
+			s.log.Info("interval changed", "from", interval, "to", d)
+			interval = d
 			ticker.Reset(interval)
 		}
 	}
+}
+
+// interval returns the configured cycle interval, or one hour if the config
+// cannot be read or interval is not a positive duration.
+func (s *Server) interval() time.Duration {
+	cfg, err := config.Load(s.cfgPath)
+	if err != nil {
+		return time.Hour
+	}
+	d, err := time.ParseDuration(cfg.Interval)
+	if err != nil || d <= 0 {
+		if cfg.Interval != s.badInterval {
+			s.log.Warn("invalid interval in config, using 1h", "interval", cfg.Interval)
+			s.badInterval = cfg.Interval
+		}
+		return time.Hour
+	}
+	s.badInterval = ""
+	return d
 }
 
 func (s *Server) doRun() {
@@ -76,7 +109,9 @@ func (s *Server) doRun() {
 		return
 	}
 	r := replication.New(cfg, s.log)
-	if err := r.RunCycle(); err != nil {
+	if err := r.RunCycle(); errors.Is(err, replication.ErrCycleRunning) {
+		s.log.Warn("replication cycle skipped", "err", err)
+	} else if err != nil {
 		s.log.Error("replication cycle failed", "err", err)
 	}
 }
@@ -133,11 +168,14 @@ func (s *Server) AddSlave(_ context.Context, req *pb.SlaveRequest) (*pb.SlaveRes
 		return nil, status.Errorf(codes.Internal, "load config: %v", err)
 	}
 
-	ssh, err := sshclient.New(req.Ip, cfg.SSHUser, cfg.SSHIdentity)
+	ssh, err := replication.Dial(cfg, req.Ip, true)
 	if err != nil {
 		return &pb.SlaveResponse{Ok: false, Error: err.Error()}, nil
 	}
 	defer ssh.Close()
+	if ssh.NewHostKey != "" {
+		s.log.Info("recorded slave host key", "ip", req.Ip, "fingerprint", ssh.NewHostKey, "known_hosts", cfg.SSHKnownHosts)
+	}
 
 	if err := replication.PrepareSlave(ssh, cfg); err != nil {
 		return &pb.SlaveResponse{Ok: false, Error: err.Error()}, nil
@@ -187,12 +225,4 @@ func (s *Server) WatchLogs(_ *pb.WatchLogsRequest, stream pb.Btrepl_WatchLogsSer
 			}
 		}
 	}
-}
-
-func parseDuration(s string, fallback time.Duration) time.Duration {
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return fallback
-	}
-	return d
 }

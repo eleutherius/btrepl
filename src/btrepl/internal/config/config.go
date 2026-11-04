@@ -1,8 +1,11 @@
 package config
 
 import (
+	"net"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -13,6 +16,8 @@ type Config struct {
 	BtrfsRoot      string   `yaml:"btrfs_root"`
 	SSHIdentity    string   `yaml:"ssh_identity"`
 	SSHUser        string   `yaml:"ssh_user"`
+	SSHPort        int      `yaml:"ssh_port"`
+	SSHKnownHosts  string   `yaml:"ssh_known_hosts"`
 	SnapshotDir    string   `yaml:"snapshot_dir"`
 	SnapshotPrefix string   `yaml:"snapshot_prefix"`
 	Interval       string   `yaml:"interval"`
@@ -28,6 +33,8 @@ func Default() *Config {
 		BtrfsRoot:      "/btrfs",
 		SSHIdentity:    "/root/.ssh/id_ed25519",
 		SSHUser:        "root",
+		SSHPort:        22,
+		SSHKnownHosts:  "/root/.ssh/known_hosts",
 		SnapshotDir:    ".snapshots",
 		SnapshotPrefix: "btrepl_",
 		Interval:       "1h",
@@ -81,6 +88,19 @@ func (c *Config) RemoveSlave(ip string) bool {
 		}
 	}
 	return false
+}
+
+// SlaveAddr returns the address to dial for a slave entry. An entry is a
+// host, or host:port ([v6addr]:port for IPv6) to override ssh_port.
+func (c *Config) SlaveAddr(slave string) string {
+	if host, port, err := net.SplitHostPort(slave); err == nil && host != "" && port != "" {
+		return slave
+	}
+	port := c.SSHPort
+	if port == 0 {
+		port = 22
+	}
+	return net.JoinHostPort(strings.TrimSuffix(strings.TrimPrefix(slave, "["), "]"), strconv.Itoa(port))
 }
 
 func dirOf(path string) string {
