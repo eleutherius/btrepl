@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `src/btrepl/`: the Go module (`github.com/eleutherius/btrepl`). It holds the CLI, the gRPC daemon and the proto. **The Go module root is here, not at the repo root**, so run `go` commands with `-C src/btrepl` or from inside that directory.
 - `src/pybtrepl/`: a Python gRPC client package (`btrepl.BtreplClient`) that wraps generated stubs in `btrepl/_pb/`.
-- `tests/integration/`: pytest integration tests. They run against a real 4-VM OrbStack cluster. There are no Go unit tests.
+- `tests/integration/`: pytest integration tests. They run against a real 4-VM OrbStack cluster. Go unit tests (`*_test.go`) cover only the pure logic: parsing, parent choice, prune plans.
 
 README install/build paths such as `./cmd/btrepl` and `api/btrepl.proto` date from before the move to `src/btrepl/`. The real paths are `src/btrepl/cmd/btrepl` and `src/btrepl/api/btrepl.proto`.
 
@@ -23,9 +23,10 @@ make deb
 make rpm
 # Both; this is what .github/workflows/release.yml runs on a v* tag
 make packages
-# Quick local compile/vet
+# Quick local compile/vet/unit tests
 go -C src/btrepl build ./...
 go -C src/btrepl vet ./...
+go -C src/btrepl test ./...
 
 # Regenerate stubs after editing src/btrepl/api/btrepl.proto (needs protoc, protoc-gen-go(-grpc), grpcio-tools)
 make proto          # or: make proto-go / make proto-py
@@ -61,17 +62,15 @@ Lint runs through pre-commit (`pre-commit run --all-files`): `gofmt -w`, shellch
 
 **Config is re-read from disk on every operation.** The server calls `config.Load(cfgPath)` on each cycle and RPC, and `AddSlave`/`DelSlave` persist through `config.Save`. The YAML file at `/etc/btrepl/config.yaml` is the single source of truth, and no config state is held in memory.
 
-**Replication cycle** (`internal/replication/replicator.go`): for each slave, it opens an SSH connection (`internal/sshclient`, built on `x/crypto/ssh` with key auth only). Then for each subvolume it:
-1. creates a new read-only snapshot;
-2. lists remote snapshots;
-3. `findParent` picks the newest local snapshot that also exists remotely (if there is none, it does a full send);
-4. `sshclient.PipeFrom` streams the local `btrfs send` stdout into the remote `btrfs receive` stdin, with no temp files;
-5. prunes old snapshots locally (`keep_sender`) and remotely (`keep_receiver`).
+**Replication cycle** (`internal/replication/replicator.go`) runs in three phases, and only when at least one slave is configured (slave nodes run the same daemon with `slaves: []`):
+1. **Snapshot:** one read-only snapshot per subvolume, independent of slave availability.
+2. **Replicate:** for each slave, open an SSH connection (`internal/sshclient`, built on `x/crypto/ssh` with key auth only) and list its subvolumes with `btrfs subvolume list -u -R` / `-r`. Remote snapshots that are writable or have no `received_uuid` are leftovers of an interrupted receive and are deleted. `latestCommon` picks the parent **by UUID** (local `SendUUID` == remote `received_uuid`), never by name. `sshclient.PipeFrom` streams the newest local snapshot's `btrfs send` stdout into the remote `btrfs receive` stdin, with no temp files. Then remote snapshots are pruned (`keep_receiver`, the newest always kept).
+3. **Prune local:** keep the newest `keep_sender`, plus each configured slave's last common snapshot (its anchor, unless older than `max_anchor_age`). Anchors persist across cycles in `<snapshot_dir>/.btrepl-cursors.json` (`cursors.go`), so an unreachable slave's anchor survives.
 
-Errors for one slave or subvolume are logged, and the cycle continues; the last error is returned. Note that a new snapshot is created for **each slave × subvolume** pair.
+The decision logic is in pure functions in `plan.go`, which have unit tests. Errors for one slave or subvolume are logged, and the cycle continues; the last error is returned.
 
 **Snapshot naming is load-bearing.** Names follow `<snapshot_prefix><subvol without leading @>_<YYYYMMDDTHHMMSS UTC>`, stored in `<btrfs_root>/<snapshot_dir>`. Listing, sorting, parent matching and pruning all depend on parsing this format (`internal/btrfs`), so changing it breaks the ability to find parents in existing deployments.
 
 **Log streaming:** `main` installs `logbroadcast.Broadcaster` as the default `slog` handler. It writes to stderr and also fans each record out to subscribers, and `WatchLogs` subscribes a channel to stream `LogEntry` messages to gRPC clients.
 
-`standalone` promotes the latest received snapshot to a writable subvolume so that a slave can take over. `clear` stops replication and deletes local snapshots.
+`standalone` promotes the latest complete received snapshot (read-only with a `received_uuid`) to a writable subvolume so that a slave can take over. `btrfs.Manager.Restore` creates it next to the old subvolume and swaps it in by rename. `clear` stops replication and deletes local snapshots.

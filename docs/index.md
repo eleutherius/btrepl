@@ -6,12 +6,12 @@ Automatic btrfs geo-replication with incremental send/receive over SSH, managed 
 
 `btrepl` runs on a **master** node and periodically pushes read-only btrfs snapshots to one or more **slave** nodes. Each replication cycle:
 
-1. Takes a fresh read-only snapshot of every configured subvolume.
-2. Finds the latest snapshot that already exists on the slave (the *parent*).
+1. Takes one read-only snapshot of every configured subvolume, whether or not the slaves are reachable.
+2. For each slave, finds the newest snapshot both sides have (the *parent*). Snapshots are matched by UUID, the way `btrfs receive` resolves the parent, so a snapshot on the slave counts only if its receive completed.
 3. Streams `btrfs send -p <parent> <snap>` directly into `btrfs receive` on the slave over SSH — no temporary files, no intermediate buffer.
-4. Prunes old snapshots on both sides (configurable retention).
+4. Prunes old snapshots on both sides (configurable retention). The master keeps the last snapshot it has in common with each slave, so a slave that was offline catches up with an incremental send.
 
-When a slave needs to take over, `btrepl standalone` promotes the latest snapshot to a writable subvolume, stopping replication cleanly.
+When a slave needs to take over, `btrepl standalone` promotes the latest complete received snapshot to a writable subvolume, stopping replication cleanly.
 
 ## How incremental send works
 
@@ -24,7 +24,7 @@ btrepl_data_20240601T130000         (new snapshot being sent)
         └─ btrfs send -p parent snap ──SSH──▶ btrfs receive /btrfs/.snapshots
 ```
 
-If no common snapshot exists, a full send is performed automatically.
+If no common snapshot exists, a full send is performed automatically. An interrupted receive leaves a writable snapshot without a received UUID on the slave; the next cycle deletes it before sending.
 
 ## Run modes
 

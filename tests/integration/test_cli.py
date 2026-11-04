@@ -18,6 +18,8 @@ import time
 
 import pytest
 
+from conftest import BTRFS_MNT, SNAP_DIR, SNAP_PREFIX
+
 EXPECTED_SUBVOLS = {"@eventsPictures", "@reports"}
 
 
@@ -186,10 +188,19 @@ class TestStandaloneCLI:
             if counts and all(int(c) >= 1 for c in counts):
                 break
 
+        # A newer leftover of an interrupted receive (writable, no
+        # received_uuid) must not be promoted.
+        partial = f"{BTRFS_MNT}/{SNAP_DIR}/{SNAP_PREFIX}reports_20991231T235959"
+        s.shell(f"btrfs subvolume create {partial} && touch {partial}/PARTIAL")
+
         r = s("standalone")
         assert r.returncode == 0
         combined = r.stdout + r.stderr
         assert "standalone" in combined.lower()
+        assert "skipping incomplete snapshot" in combined
+        assert s.shell(f"test -e {BTRFS_MNT}/@reports/PARTIAL", check=False).returncode != 0
+        r = s.shell(f"btrfs property get -ts {BTRFS_MNT}/@reports ro")
+        assert r.stdout.strip() == "ro=false"
 
     def test_standalone_stops_btrepl_service(self, slave_cli):
         s = slave_cli[2]

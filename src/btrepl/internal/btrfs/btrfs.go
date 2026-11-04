@@ -17,6 +17,28 @@ type Snapshot struct {
 	Subvol  string
 	Time    time.Time
 	AbsPath string
+
+	// Set only by listings that read btrfs metadata (Manager.Snapshots).
+	UUID         string
+	ReceivedUUID string
+	ReadOnly     bool
+}
+
+// SendUUID is the UUID that btrfs send puts in the stream for this snapshot,
+// and that the receiver stores as its received_uuid: the snapshot's own
+// received UUID if it was itself received, else its UUID.
+func (s Snapshot) SendUUID() string {
+	if s.ReceivedUUID != "" {
+		return s.ReceivedUUID
+	}
+	return s.UUID
+}
+
+// Received reports whether s is a complete received snapshot. btrfs receive
+// sets the received UUID and the read-only flag only after the whole stream
+// has been applied, so an interrupted receive leaves the snapshot writable.
+func (s Snapshot) Received() bool {
+	return s.ReadOnly && s.ReceivedUUID != ""
 }
 
 type Manager struct {
@@ -46,14 +68,30 @@ func (m *Manager) EnsureSnapshotDir() error {
 }
 
 // CreateSnapshot creates a read-only snapshot of subvol and returns its descriptor.
+// Snapshot names have one-second resolution: if this second's name is taken
+// (the previous cycle finished less than a second ago), it waits for the next
+// second rather than let btrfs create the snapshot inside the existing one.
 func (m *Manager) CreateSnapshot(subvol string) (Snapshot, error) {
 	if err := m.EnsureSnapshotDir(); err != nil {
 		return Snapshot{}, fmt.Errorf("ensure snapshot dir: %w", err)
 	}
 
-	ts := time.Now().UTC().Format(timestampLayout)
-	name := m.snapshotName(subvol, ts)
-	snapPath := filepath.Join(m.SnapshotDirPath(), name)
+	var ts, name, snapPath string
+	for attempt := 0; ; attempt++ {
+		now := time.Now().UTC()
+		ts = now.Format(timestampLayout)
+		name = m.snapshotName(subvol, ts)
+		snapPath = filepath.Join(m.SnapshotDirPath(), name)
+		if _, err := os.Lstat(snapPath); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			return Snapshot{}, err
+		}
+		if attempt == 1 {
+			return Snapshot{}, fmt.Errorf("snapshot %s already exists", snapPath)
+		}
+		time.Sleep(time.Until(now.Truncate(time.Second).Add(time.Second)))
+	}
 	subvolPath := m.SubvolPath(subvol)
 
 	cmd := exec.Command("btrfs", "subvolume", "snapshot", "-r", subvolPath, snapPath)
@@ -223,6 +261,58 @@ func (m *Manager) WritableSnapshot(src, dst string) error {
 		return fmt.Errorf("btrfs writable snapshot %s -> %s: %w\n%s", src, dst, err, out)
 	}
 	return nil
+}
+
+// Restore replaces subvol with a writable snapshot of snap. The new subvolume
+// is created next to the old one first and swapped in by rename, so a failure
+// at any step leaves the existing subvolume in place. If the old data could
+// not be deleted after the swap, it returns the path it was moved to.
+func (m *Manager) Restore(snap Snapshot, subvol string) (kept string, err error) {
+	dst := m.SubvolPath(subvol)
+	tmp := dst + ".btrepl-new"
+	if err := m.DeleteSubvolume(tmp); err != nil {
+		return "", fmt.Errorf("remove leftover %s: %w", tmp, err)
+	}
+	if _, err := os.Lstat(tmp); !os.IsNotExist(err) {
+		return "", fmt.Errorf("%s is in the way and is not a subvolume: remove it", tmp)
+	}
+	if err := m.WritableSnapshot(snap.AbsPath, tmp); err != nil {
+		return "", err
+	}
+
+	old := ""
+	if _, err := os.Lstat(dst); err == nil {
+		old = fmt.Sprintf("%s.btrepl-old-%s", dst, time.Now().UTC().Format(timestampLayout))
+		if err := os.Rename(dst, old); err != nil {
+			_ = m.DeleteSubvolume(tmp)
+			return "", fmt.Errorf("move %s aside: %w", dst, err)
+		}
+	} else if !os.IsNotExist(err) {
+		_ = m.DeleteSubvolume(tmp)
+		return "", err
+	}
+
+	if err := os.Rename(tmp, dst); err != nil {
+		if old != "" {
+			if rerr := os.Rename(old, dst); rerr != nil {
+				return old, fmt.Errorf("move %s into place: %w (old data left at %s: %v)", tmp, err, old, rerr)
+			}
+		}
+		_ = m.DeleteSubvolume(tmp)
+		return "", fmt.Errorf("move %s into place: %w", tmp, err)
+	}
+
+	if old == "" {
+		return "", nil
+	}
+	// A plain directory that was in the way is kept for the operator.
+	if isSubvol, _ := m.SubvolumeExists(old); !isSubvol {
+		return old, nil
+	}
+	if err := m.DeleteSubvolume(old); err != nil {
+		return old, nil
+	}
+	return "", nil
 }
 
 // EnableQuota enables btrfs quota on the root.

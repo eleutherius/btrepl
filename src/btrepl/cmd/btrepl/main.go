@@ -221,26 +221,27 @@ func cmdStandalone(log *slog.Logger) *cobra.Command {
 				subvols, _ = bm.ListAllSubvolumes()
 				log.Info("discovered subvolumes from snapshots", "subvols", subvols)
 			}
+			infos, err := bm.ListSubvolumes()
+			if err != nil {
+				return err
+			}
 			for _, subvol := range subvols {
-				snaps, err := bm.ListSnapshots(subvol)
-				if err != nil || len(snaps) == 0 {
-					log.Warn("no snapshots to restore", "subvol", subvol)
+				latest := latestReceived(bm.Snapshots(subvol, infos), func(s btrfs.Snapshot) {
+					log.Warn("skipping incomplete snapshot (interrupted receive?)", "snap", s.Name)
+				})
+				if latest == nil {
+					log.Warn("no complete received snapshot to restore", "subvol", subvol)
 					continue
 				}
-				latest := snaps[len(snaps)-1]
-				dst := bm.SubvolPath(subvol)
-
-				exists, _ := bm.SubvolumeExists(dst)
-				if exists {
-					if err := bm.DeleteSubvolume(dst); err != nil {
-						log.Warn("delete existing subvol", "subvol", subvol, "err", err)
-					}
+				kept, err := bm.Restore(*latest, subvol)
+				if err != nil {
+					log.Error("restore snapshot", "snap", latest.Name, "subvol", subvol, "err", err)
+					continue
 				}
-				if err := bm.WritableSnapshot(latest.AbsPath, dst); err != nil {
-					log.Error("restore snapshot", "snap", latest.Name, "dst", dst, "err", err)
-				} else {
-					log.Info("restored", "subvol", subvol, "from", latest.Name)
+				if kept != "" {
+					log.Warn("previous data could not be deleted, remove it by hand", "subvol", subvol, "path", kept)
 				}
+				log.Info("restored", "subvol", subvol, "from", latest.Name)
 			}
 
 			if err := bm.EnableQuota(); err != nil {
@@ -278,6 +279,9 @@ func cmdClear(log *slog.Logger) *cobra.Command {
 						log.Warn("delete snapshot", "snap", s.Name, "err", err)
 					}
 				}
+			}
+			if err := os.Remove(replication.CursorPath(bm.SnapshotDirPath())); err != nil && !os.IsNotExist(err) {
+				log.Warn("delete replication cursors", "err", err)
 			}
 
 			cfg.Slaves = nil
@@ -384,6 +388,18 @@ func cmdServe(log *slog.Logger, bc *logbroadcast.Broadcaster) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&addr, "addr", ":50051", "gRPC listen address")
 	return cmd
+}
+
+// latestReceived returns the newest complete received snapshot, the only kind
+// standalone may promote, and reports newer incomplete ones through skip.
+func latestReceived(snaps []btrfs.Snapshot, skip func(btrfs.Snapshot)) *btrfs.Snapshot {
+	for i := len(snaps) - 1; i >= 0; i-- {
+		if snaps[i].Received() {
+			return &snaps[i]
+		}
+		skip(snaps[i])
+	}
+	return nil
 }
 
 func boolStatus(b bool) string {
