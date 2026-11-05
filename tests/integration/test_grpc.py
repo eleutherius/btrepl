@@ -78,22 +78,19 @@ class TestReplication:
     def test_run_ok(self, master_client):
         _safe_run(master_client)
 
-    def test_run_increments_master_snapshot_count(self, master_client):
-        before = {sv.name: sv.snapshot_count for sv in master_client.status().subvolumes}
+    def test_run_creates_new_master_snapshot(self, master_client):
+        """Every subvolume gets a new latest snapshot. The count can stay the
+        same: keep_sender prunes an old one in the same cycle."""
+        before = {sv.name: sv.latest_snapshot for sv in master_client.status().subvolumes}
         _safe_run(master_client)
 
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             time.sleep(3)
-            after = {sv.name: sv.snapshot_count for sv in master_client.status().subvolumes}
-            if all(after[n] > before[n] for n in before):
+            after = {sv.name: sv.latest_snapshot for sv in master_client.status().subvolumes}
+            if all(after[n] != before[n] for n in before):
                 return
-
-        delta = {
-            n: master_client.status().subvolumes[i].snapshot_count - before[n]
-            for i, n in enumerate(before)
-        }
-        pytest.fail(f"master snapshot count did not increase within 60 s — delta: {delta}")
+        pytest.fail(f"no new snapshot within 60 s — before: {before}, after: {after}")
 
     def test_run_replicates_to_all_slaves(self, master_client, slave_clients):
         """Every slave must have ≥ 1 snapshot per subvol after a run cycle."""

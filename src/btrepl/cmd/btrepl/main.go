@@ -125,6 +125,7 @@ func cmdInitMaster(log *slog.Logger) *cobra.Command {
 
 func cmdAddSlave(log *slog.Logger) *cobra.Command {
 	var slaveIP string
+	var noRestrict bool
 	cmd := &cobra.Command{
 		Use:   "add-slave",
 		Short: "Add a slave node to replication",
@@ -152,6 +153,12 @@ func cmdAddSlave(log *slog.Logger) *cobra.Command {
 				return err
 			}
 
+			if !noRestrict {
+				if err := replication.RestrictKeyAndLog(ssh, cfg, slaveIP, log); err != nil {
+					return err
+				}
+			}
+
 			if err := systemd.Enable(timerUnit); err != nil {
 				log.Warn("enable timer", "err", err)
 			}
@@ -164,6 +171,7 @@ func cmdAddSlave(log *slog.Logger) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&slaveIP, "server", "s", "", "slave IP or hostname, optionally with :port")
+	cmd.Flags().BoolVar(&noRestrict, "no-restrict", false, "keep the master's key on the slave unrestricted instead of limiting it to btrepl ssh-filter")
 	_ = cmd.MarkFlagRequired("server")
 	return cmd
 }

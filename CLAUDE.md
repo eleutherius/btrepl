@@ -62,6 +62,8 @@ Lint runs through pre-commit (`pre-commit run --all-files`): `gofmt -w`, shellch
 
 **Config is re-read from disk on every operation.** The server calls `config.Load(cfgPath)` on each cycle and RPC, and `AddSlave`/`DelSlave` persist through `config.Save`. `RunLoop` also re-reads `interval` every minute and resets its ticker. The YAML file at `/etc/btrepl/config.yaml` is the single source of truth, and no config state is held in memory.
 
+**Slave access:** `add-slave` (and the `AddSlave` RPC) call `replication.RestrictKey`, which rewrites the master's key line in the slave's `authorized_keys` to `restrict,from=…,command="btrepl ssh-filter"`, re-checks a cycle through it and restores the file if that fails. `sshclient` sends keepalives (30s × 3), limits `Run` to `ssh_command_timeout` and aborts `PipeFrom` after `send_idle_timeout` without progress.
+
 **One cycle at a time:** `RunCycle` takes a non-blocking `flock` on `/run/btrepl.lock` (`replication/lock.go`) and returns `ErrCycleRunning` if the daemon or another `btrepl run` holds it.
 
 **Replication cycle** (`internal/replication/replicator.go`) runs in three phases, and only when at least one slave is configured (slave nodes run the same daemon with `slaves: []`):
@@ -71,7 +73,7 @@ Lint runs through pre-commit (`pre-commit run --all-files`): `gofmt -w`, shellch
 
 The decision logic is in pure functions in `plan.go`, which have unit tests. Errors for one slave or subvolume are logged, and the cycle continues; the last error is returned.
 
-**Remote commands** are built only by `internal/remote` (paths quoted with `remote.Quote`). `btrepl ssh-filter`, the forced command for the master's key on a slave, checks `SSH_ORIGINAL_COMMAND` against the same builders (`Commands.Allow`) and execs it without a shell, so a new remote command must be added there.
+**Remote commands** are built only by `internal/remote` (paths quoted with `remote.Quote`; `btrfs receive --chroot`; the snapshot dir is kept at 0700). `btrepl ssh-filter`, the forced command for the master's key on a slave, checks `SSH_ORIGINAL_COMMAND` against the same builders (`Commands.Allow`) and execs it without a shell, so a new remote command must be added there.
 
 **Snapshot naming is load-bearing.** Names follow `<snapshot_prefix><subvol without leading @>_<YYYYMMDDTHHMMSS UTC>`, stored in `<btrfs_root>/<snapshot_dir>`. Listing, sorting, parent matching and pruning all depend on parsing this format (`internal/btrfs`), so changing it breaks the ability to find parents in existing deployments.
 

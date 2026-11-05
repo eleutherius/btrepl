@@ -30,16 +30,33 @@ btrepl add-slave -s 192.168.1.10:2222
 
 ## Restricting the master's key
 
-By default the master's key can run any command as root on the slave. To limit it to the commands btrepl needs, make `btrepl ssh-filter` the forced command for that key in the slave's `/root/.ssh/authorized_keys`:
+`btrepl add-slave` limits the master's key on the slave to the commands btrepl needs. It rewrites the key's line in the slave's `~/.ssh/authorized_keys` to:
 
 ```text
 restrict,from="192.168.1.5",command="/usr/local/bin/btrepl ssh-filter" ssh-ed25519 AAAA... root@master
 ```
 
 - `restrict` turns off port forwarding, agent forwarding and the terminal.
-- `from=` accepts the key only from the master's address.
-- `btrepl ssh-filter` allows only the commands a replication cycle runs: reading `/proc/self/mountinfo`, creating the snapshot directory, listing subvolumes, `btrfs receive` into the snapshot directory and deleting snapshots in it. It refuses anything else, and runs the allowed commands without a shell.
+- `from=` accepts the key only from the address the slave sees the master connect from.
+- `btrepl ssh-filter` allows only the commands a replication cycle runs: reading `/proc/self/mountinfo`, creating the snapshot directory and setting its mode, listing subvolumes, `btrfs receive --chroot` into the snapshot directory and deleting snapshots in it. It refuses anything else, and runs the allowed commands without a shell.
 
-`ssh-filter` reads `btrfs_root` and `snapshot_dir` from the slave's `/etc/btrepl/config.yaml`, or uses the defaults if there is none. They must match the master's config.
+After the change `add-slave` connects again through the restricted key and runs the commands of a cycle. If that fails, it puts the previous `authorized_keys` back and warns that the key keeps full access. It also only warns, and changes nothing, when btrepl is not installed on the slave or the key is not in `~/.ssh/authorized_keys` (for example with a custom `AuthorizedKeysFile`). Run `add-slave` again after fixing the cause. Use `--no-restrict` to keep the key unrestricted.
+
+To restrict a key by hand, write the line above yourself.
+
+`ssh-filter` reads `btrfs_root` and `snapshot_dir` from the slave's `/etc/btrepl/config.yaml`, or uses the defaults if there is none. They must match the master's config. It accepts exactly the commands of the same btrepl version, so upgrade the master and the slaves together.
 
 `btrfs receive` needs root, so the key still logs in as root on the slave. A non-root user with `sudo` is not supported yet.
+
+!!! note "Upgrading"
+    Slaves added by an earlier version keep an unrestricted key. Run `btrepl add-slave -s <host>` once for each of them to restrict it.
+
+## Timeouts
+
+A slave that stops responding must not stall replication to the others:
+
+- The master sends an SSH keepalive every 30 seconds and drops the connection after three unanswered ones.
+- Each remote command other than the send must finish within `ssh_command_timeout` (default `2m`).
+- A send is aborted when no data reaches the slave for `send_idle_timeout` (default `10m`). Raise it if `btrfs receive` on a slow disk needs longer to finish after the last data.
+
+The cycle then goes on with the next slave.

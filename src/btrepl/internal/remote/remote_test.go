@@ -40,12 +40,13 @@ func TestCommands(t *testing.T) {
 	c := New("/btrfs", ".snapshots")
 	for got, want := range map[string]string{
 		c.MountInfo():                 "cat /proc/self/mountinfo",
-		c.MkdirSnapshotDir():          "mkdir -p /btrfs/.snapshots",
+		c.MkdirSnapshotDir():          "mkdir -p -m 0700 /btrfs/.snapshots",
+		c.ChmodSnapshotDir():          "chmod 0700 /btrfs/.snapshots",
 		c.ListSubvolumes():            "btrfs subvolume list -u -R /btrfs",
 		c.ListReadOnly():              "btrfs subvolume list -r /btrfs",
-		c.Receive():                   "btrfs receive /btrfs/.snapshots",
+		c.Receive():                   "btrfs receive --chroot /btrfs/.snapshots",
 		c.Delete("btrepl_x"):          "btrfs subvolume delete /btrfs/.snapshots/btrepl_x",
-		New("/my fs/", "s").Receive(): "btrfs receive '/my fs/s'",
+		New("/my fs/", "s").Receive(): "btrfs receive --chroot '/my fs/s'",
 	} {
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
@@ -57,10 +58,11 @@ func TestAllow(t *testing.T) {
 	for _, c := range []Commands{New("/btrfs", ".snapshots"), New("/my fs", "snap shots")} {
 		for cmd, want := range map[string][]string{
 			c.MountInfo():                           {"cat", "/proc/self/mountinfo"},
-			c.MkdirSnapshotDir():                    {"mkdir", "-p", c.snapDir},
+			c.MkdirSnapshotDir():                    {"mkdir", "-p", "-m", "0700", c.snapDir},
+			c.ChmodSnapshotDir():                    {"chmod", "0700", c.snapDir},
 			c.ListSubvolumes():                      {"btrfs", "subvolume", "list", "-u", "-R", c.root},
 			c.ListReadOnly():                        {"btrfs", "subvolume", "list", "-r", c.root},
-			c.Receive():                             {"btrfs", "receive", c.snapDir},
+			c.Receive():                             {"btrfs", "receive", "--chroot", c.snapDir},
 			c.Delete("btrepl_data_20261104T100000"): {"btrfs", "subvolume", "delete", c.snapDir + "/btrepl_data_20261104T100000"},
 		} {
 			got, err := c.Allow(cmd)
@@ -80,6 +82,9 @@ func TestAllowRejects(t *testing.T) {
 		"cat /etc/shadow",
 		"mkdir -p /etc",
 		"btrfs receive /",
+		"btrfs receive /btrfs/.snapshots", // without --chroot
+		"mkdir -p /btrfs/.snapshots",
+		"chmod 0777 /btrfs/.snapshots",
 		"btrfs subvolume delete /btrfs/@data",
 		"btrfs subvolume delete /btrfs/.snapshots",
 		"btrfs subvolume delete /btrfs/.snapshots/",

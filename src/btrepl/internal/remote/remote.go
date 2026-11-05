@@ -21,11 +21,19 @@ func New(btrfsRoot, snapshotDir string) Commands {
 	return Commands{root: root, snapDir: filepath.Join(root, snapshotDir)}
 }
 
-func (c Commands) MountInfo() string        { return "cat /proc/self/mountinfo" }
-func (c Commands) MkdirSnapshotDir() string { return "mkdir -p " + Quote(c.snapDir) }
-func (c Commands) ListSubvolumes() string   { return "btrfs subvolume list -u -R " + Quote(c.root) }
-func (c Commands) ListReadOnly() string     { return "btrfs subvolume list -r " + Quote(c.root) }
-func (c Commands) Receive() string          { return "btrfs receive " + Quote(c.snapDir) }
+func (c Commands) MountInfo() string      { return "cat /proc/self/mountinfo" }
+func (c Commands) ListSubvolumes() string { return "btrfs subvolume list -u -R " + Quote(c.root) }
+func (c Commands) ListReadOnly() string   { return "btrfs subvolume list -r " + Quote(c.root) }
+
+// MkdirSnapshotDir and ChmodSnapshotDir keep the snapshot directory
+// readable only by root: received files keep their numeric owners, which
+// may belong to other users on the slave.
+func (c Commands) MkdirSnapshotDir() string { return "mkdir -p -m 0700 " + Quote(c.snapDir) }
+func (c Commands) ChmodSnapshotDir() string { return "chmod 0700 " + Quote(c.snapDir) }
+
+// Receive confines btrfs receive to the snapshot directory with chroot, so
+// a crafted stream cannot write outside it.
+func (c Commands) Receive() string { return "btrfs receive --chroot " + Quote(c.snapDir) }
 
 // Delete deletes the snapshot called name in the snapshot directory.
 func (c Commands) Delete(name string) string {
@@ -42,13 +50,15 @@ func (c Commands) Allow(cmd string) ([]string, error) {
 	case c.MountInfo():
 		return []string{"cat", "/proc/self/mountinfo"}, nil
 	case c.MkdirSnapshotDir():
-		return []string{"mkdir", "-p", c.snapDir}, nil
+		return []string{"mkdir", "-p", "-m", "0700", c.snapDir}, nil
+	case c.ChmodSnapshotDir():
+		return []string{"chmod", "0700", c.snapDir}, nil
 	case c.ListSubvolumes():
 		return []string{"btrfs", "subvolume", "list", "-u", "-R", c.root}, nil
 	case c.ListReadOnly():
 		return []string{"btrfs", "subvolume", "list", "-r", c.root}, nil
 	case c.Receive():
-		return []string{"btrfs", "receive", c.snapDir}, nil
+		return []string{"btrfs", "receive", "--chroot", c.snapDir}, nil
 	}
 	if arg, ok := strings.CutPrefix(cmd, deletePrefix); ok {
 		path, ok := unquote(arg)

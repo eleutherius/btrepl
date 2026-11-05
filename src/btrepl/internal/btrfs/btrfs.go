@@ -63,8 +63,14 @@ func (m *Manager) snapshotName(subvol, ts string) string {
 	return m.prefix + stripAt(subvol) + "_" + ts
 }
 
+// EnsureSnapshotDir creates the snapshot directory and makes it readable
+// only by root, also when it already existed: snapshots keep old versions of
+// files that their owners may have deleted or protected since.
 func (m *Manager) EnsureSnapshotDir() error {
-	return os.MkdirAll(m.SnapshotDirPath(), 0755)
+	if err := os.MkdirAll(m.SnapshotDirPath(), 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(m.SnapshotDirPath(), 0o700)
 }
 
 // CreateSnapshot creates a read-only snapshot of subvol and returns its descriptor.

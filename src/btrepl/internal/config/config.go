@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,6 +19,8 @@ type Config struct {
 	SSHUser        string   `yaml:"ssh_user"`
 	SSHPort        int      `yaml:"ssh_port"`
 	SSHKnownHosts  string   `yaml:"ssh_known_hosts"`
+	SSHCmdTimeout  string   `yaml:"ssh_command_timeout"`
+	SendIdle       string   `yaml:"send_idle_timeout"`
 	SnapshotDir    string   `yaml:"snapshot_dir"`
 	SnapshotPrefix string   `yaml:"snapshot_prefix"`
 	Interval       string   `yaml:"interval"`
@@ -35,6 +38,8 @@ func Default() *Config {
 		SSHUser:        "root",
 		SSHPort:        22,
 		SSHKnownHosts:  "/root/.ssh/known_hosts",
+		SSHCmdTimeout:  "2m",
+		SendIdle:       "10m",
 		SnapshotDir:    ".snapshots",
 		SnapshotPrefix: "btrepl_",
 		Interval:       "1h",
@@ -88,6 +93,22 @@ func (c *Config) RemoveSlave(ip string) bool {
 		}
 	}
 	return false
+}
+
+// CommandTimeout is the limit for one remote command other than the send
+// (ssh_command_timeout). An empty, invalid or non-positive value gives 2m.
+func (c *Config) CommandTimeout() time.Duration { return duration(c.SSHCmdTimeout, 2*time.Minute) }
+
+// SendIdleTimeout aborts a send that moves no data for this long
+// (send_idle_timeout). An empty, invalid or non-positive value gives 10m.
+func (c *Config) SendIdleTimeout() time.Duration { return duration(c.SendIdle, 10*time.Minute) }
+
+func duration(s string, def time.Duration) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 // SlaveAddr returns the address to dial for a slave entry. An entry is a

@@ -37,6 +37,8 @@ func Dial(cfg *config.Config, slave string, trustNewHostKey bool) (*sshclient.Cl
 		KeyPath:         cfg.SSHIdentity,
 		KnownHosts:      cfg.SSHKnownHosts,
 		TrustNewHostKey: trustNewHostKey,
+		CommandTimeout:  cfg.CommandTimeout(),
+		SendIdleTimeout: cfg.SendIdleTimeout(),
 	})
 }
 
@@ -157,8 +159,10 @@ func PrepareSlave(ssh *sshclient.Client, cfg *config.Config) error {
 	if err := btrfs.CheckMountInfo(mountinfo, cfg.BtrfsRoot); err != nil {
 		return fmt.Errorf("slave: %w", err)
 	}
-	if _, err := ssh.Run(cmds.MkdirSnapshotDir()); err != nil {
-		return fmt.Errorf("prepare slave snapshot dir: %w", err)
+	for _, cmd := range []string{cmds.MkdirSnapshotDir(), cmds.ChmodSnapshotDir()} {
+		if _, err := ssh.Run(cmd); err != nil {
+			return fmt.Errorf("prepare slave snapshot dir: %w", err)
+		}
 	}
 	return nil
 }

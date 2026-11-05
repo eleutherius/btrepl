@@ -69,28 +69,28 @@ class TestRunCLI:
         assert "replication" in combined.lower()
 
     def test_creates_snapshot_on_master(self, master_cli):
-        """Snapshot count should increase after a run."""
-        def _counts() -> dict[str, int]:
+        """Every subvolume gets a new latest snapshot after a run. The count
+        can stay the same: keep_sender prunes an old one in the same cycle."""
+        def _latest() -> dict[str, str]:
             out = master_cli("status").stdout
-            counts = {}
+            latest = {}
             for sv in EXPECTED_SUBVOLS:
-                m = re.search(rf"{re.escape(sv)}\s+snapshots:\s+(\d+)", out)
+                m = re.search(rf"{re.escape(sv)}\s+snapshots:\s+\d+\s+latest:\s+(\S+)", out)
                 if m:
-                    counts[sv] = int(m.group(1))
-            return counts
+                    latest[sv] = m.group(1)
+            return latest
 
-        before = _counts()
+        before = _latest()
         master_cli("run")
 
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             time.sleep(3)
-            after = _counts()
-            if all(after.get(sv, 0) > before.get(sv, -1) for sv in EXPECTED_SUBVOLS):
+            after = _latest()
+            if all(after.get(sv) not in (None, before.get(sv)) for sv in EXPECTED_SUBVOLS):
                 return
 
-        after = _counts()
-        pytest.fail(f"snapshot count did not increase within 60 s — before: {before}, after: {after}")
+        pytest.fail(f"no new snapshot within 60 s — before: {before}, after: {_latest()}")
 
 
 # ── btrepl add-slave / del-slave ──────────────────────────────────────────────

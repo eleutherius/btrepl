@@ -185,6 +185,9 @@ func (s *Server) AddSlave(_ context.Context, req *pb.SlaveRequest) (*pb.SlaveRes
 	if err := config.Save(cfg, s.cfgPath); err != nil {
 		return nil, status.Errorf(codes.Internal, "save config: %v", err)
 	}
+	if err := replication.RestrictKeyAndLog(ssh, cfg, req.Ip, s.log); err != nil {
+		return &pb.SlaveResponse{Ok: false, Error: err.Error()}, nil
+	}
 
 	s.log.Info("slave added", "ip", req.Ip)
 	return &pb.SlaveResponse{Ok: true}, nil

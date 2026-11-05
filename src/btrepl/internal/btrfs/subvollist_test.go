@@ -1,6 +1,7 @@
 package btrfs
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -96,5 +97,19 @@ func TestSendUUID(t *testing.T) {
 	// A snapshot that was itself received is sent under its received UUID.
 	if got := (Snapshot{UUID: "a", ReceivedUUID: "b"}).SendUUID(); got != "b" {
 		t.Errorf("SendUUID = %s, want b", got)
+	}
+}
+
+func TestEnsureSnapshotDirIsPrivate(t *testing.T) {
+	root := t.TempDir()
+	m := NewManager(root, ".snapshots", "btrepl_")
+	if err := os.MkdirAll(m.SnapshotDirPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.EnsureSnapshotDir(); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(m.SnapshotDirPath()); st.Mode().Perm() != 0o700 {
+		t.Fatalf("snapshot dir mode = %s, want 0700", st.Mode().Perm())
 	}
 }
