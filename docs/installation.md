@@ -37,6 +37,7 @@ Options are passed as environment variables:
 | `BTREPL_INSTALL_DIR` | `/usr/local/bin` | Where to put the binary |
 | `BTREPL_NO_DEPS` | unset | Set to `1` to skip installing `btrfs-progs` / SSH client |
 | `BTREPL_NO_SERVICE` | unset | Set to `1` to skip installing the systemd unit |
+| `BTREPL_INSECURE_SKIP_VERIFY` | unset | Set to `1` to install even if the download cannot be verified. A checksum mismatch always stops the install |
 
 Example: pin a version and skip the service:
 
@@ -55,6 +56,21 @@ sh install.sh
 
 !!! note "RHEL, Rocky and Alma 8+"
     These distros do not ship `btrfs-progs` in their base repos, and their kernels do not support btrfs. The script prints a warning and installs `btrepl` anyway. Enable [EPEL](https://docs.fedoraproject.org/en-US/epel/) (and use a btrfs-capable kernel) before running it.
+
+### Verification
+
+The script checks the binary and the systemd unit against the release's `SHA256SUMS` and stops if either is missing, the checksum does not match, or neither `sha256sum` nor `shasum` is installed. When [`gh`](https://cli.github.com/) is installed and logged in, it also checks the [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations): proof that the file was built by this repository's release workflow from a tagged commit.
+
+## Verifying a download
+
+Checksums detect a damaged download, but they come from the same release as the files. The attestation shows who built the file:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify btrepl_linux_amd64 --repo eleutherius/btrepl
+```
+
+Attestations exist for releases from v0.2.0 on. They cover the binaries, the `.deb` and `.rpm` packages, `btrepl.service` and `install.sh`.
 
 ## .deb / .rpm packages
 

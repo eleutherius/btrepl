@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # build provenance attestations
+  attestations: write
 
 jobs:
   release:
@@ -27,7 +29,17 @@ jobs:
         mkdir -p dist
         cp build/bin/btrepl_linux_* build/*.deb build/*.rpm dist/
         cp src/btrepl/deploy/btrepl.service install.sh dist/
-        cd dist && sha256sum btrepl_linux_* *.deb *.rpm > SHA256SUMS
+        cd dist && sha256sum btrepl_linux_* *.deb *.rpm btrepl.service install.sh > SHA256SUMS
+
+    - name: Attest build provenance
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: |
+          dist/btrepl_linux_*
+          dist/*.deb
+          dist/*.rpm
+          dist/btrepl.service
+          dist/install.sh
 
     - name: Publish GitHub release
       env:
