@@ -59,7 +59,7 @@ sh install.sh
 
 ### Verification
 
-The script checks the binary and the systemd unit against the release's `SHA256SUMS` and stops if either is missing, the checksum does not match, or neither `sha256sum` nor `shasum` is installed. When [`gh`](https://cli.github.com/) is installed and logged in, it also checks the [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations): proof that the file was built by this repository's release workflow from a tagged commit.
+The script checks the binary and the systemd unit against the release's `SHA256SUMS` and stops if either is missing, the checksum does not match, or neither `sha256sum` nor `shasum` is installed. When [`gh`](https://cli.github.com/) 2.49 or later is installed and logged in, it also checks the [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations): proof that the file was built by this repository's release workflow from a tagged commit.
 
 ## Verifying a download
 
