@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -364,17 +363,23 @@ func cmdRun(log *slog.Logger) *cobra.Command {
 
 func cmdServe(log *slog.Logger, bc *logbroadcast.Broadcaster) *cobra.Command {
 	var addr string
+	var files server.TLSFiles
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start gRPC daemon with internal replication loop",
+		Long: `Start the gRPC daemon with the internal replication loop.
+
+By default the API listens on a Unix socket that only root can open. To
+listen on TCP, give a host:port and the files for mutual TLS: clients must
+present a certificate signed by --tls-client-ca.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lis, err := net.Listen("tcp", addr)
+			lis, opts, err := server.Listen(addr, files)
 			if err != nil {
 				return err
 			}
 
 			srv := server.New(cfgPath, log, bc)
-			grpcSrv := grpc.NewServer()
+			grpcSrv := grpc.NewServer(opts...)
 			pb.RegisterBtreplServer(grpcSrv, srv)
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -387,11 +392,14 @@ func cmdServe(log *slog.Logger, bc *logbroadcast.Broadcaster) *cobra.Command {
 				grpcSrv.GracefulStop()
 			}()
 
-			log.Info("gRPC server listening", "addr", addr)
+			log.Info("gRPC server listening", "addr", addr, "mutual_tls", len(opts) > 0)
 			return grpcSrv.Serve(lis)
 		},
 	}
-	cmd.Flags().StringVar(&addr, "addr", ":50051", "gRPC listen address")
+	cmd.Flags().StringVar(&addr, "addr", server.DefaultAddr, "gRPC listen address: unix:<path>, or host:port with mutual TLS")
+	cmd.Flags().StringVar(&files.Cert, "tls-cert", "", "server certificate (PEM) for a TCP address")
+	cmd.Flags().StringVar(&files.Key, "tls-key", "", "server private key (PEM) for a TCP address")
+	cmd.Flags().StringVar(&files.ClientCA, "tls-client-ca", "", "CA certificate (PEM) that signs allowed client certificates")
 	return cmd
 }
 

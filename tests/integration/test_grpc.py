@@ -2,7 +2,7 @@
 gRPC API tests.
 
 Every call goes through an SSH port-forwarding tunnel to the btrepl daemon
-(btrepl:50051). No direct network access to the VMs is assumed.
+(/run/btrepl/btrepl.sock). No direct network access to the VMs is assumed.
 
 Fixtures used (all defined in conftest.py):
   master_client        — session-scoped BtreplClient for btrepl1

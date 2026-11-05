@@ -37,21 +37,47 @@ class LogEntry:
 class BtreplClient:
     """Synchronous gRPC client for the btrepl daemon.
 
+    ``addr`` is ``unix:/run/btrepl/btrepl.sock`` on the node itself (as root),
+    a local port forwarded to that socket over SSH, or ``host:port`` of a
+    daemon that listens on TCP with mutual TLS. For the latter pass the CA
+    that signed the server certificate and this client's certificate and key,
+    all as PEM bytes.
+
     Usage::
 
-        with BtreplClient("192.168.1.10:50051") as c:
+        with BtreplClient("unix:/run/btrepl/btrepl.sock") as c:
             print(c.status())
             c.run()
+
+        with BtreplClient("master:50051", root_certificates=ca,
+                          certificate_chain=cert, private_key=key) as c:
+            print(c.status())
     """
 
-    def __init__(self, addr: str, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        addr: str,
+        timeout: float = 10.0,
+        *,
+        root_certificates: bytes | None = None,
+        certificate_chain: bytes | None = None,
+        private_key: bytes | None = None,
+    ) -> None:
         self._addr = addr
         self._timeout = timeout
+        self._tls = (root_certificates, private_key, certificate_chain)
         self._channel: grpc.Channel | None = None
         self._stub: pb_grpc.BtreplStub | None = None
 
     def connect(self) -> "BtreplClient":
-        self._channel = grpc.insecure_channel(self._addr)
+        if any(self._tls):
+            root, key, chain = self._tls
+            creds = grpc.ssl_channel_credentials(
+                root_certificates=root, private_key=key, certificate_chain=chain
+            )
+            self._channel = grpc.secure_channel(self._addr, creds)
+        else:
+            self._channel = grpc.insecure_channel(self._addr)
         self._stub = pb_grpc.BtreplStub(self._channel)
         return self
 

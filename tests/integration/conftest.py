@@ -3,7 +3,7 @@ Cluster lifecycle and shared fixtures for btrepl integration tests.
 
 Topology: btrepl1 (master) + btrepl2/3/4 (slaves) on OrbStack.
 All remote access is via SSH — either orbctl-exec for CLI or SSH port-forwarding
-for gRPC (since btrepl:50051 is not exposed on the host network).
+for gRPC (the daemon listens on a root-only Unix socket, not on the network).
 
 Pre-requisites:
   - OrbStack running with a base image named SOURCE_MACHINE
@@ -46,7 +46,7 @@ SSH_KEY     = "/root/.ssh/id_ed25519"
 SUBVOLS     = ["@eventsPictures", "@reports"]
 SNAP_DIR    = ".snapshots"
 SNAP_PREFIX = "btrepl_"
-GRPC_PORT   = 50051
+GRPC_SOCKET = "/run/btrepl/btrepl.sock"
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 
@@ -149,18 +149,20 @@ def _wait_local_port(port: int, timeout: float = 15.0) -> None:
 
 
 @contextmanager
-def ssh_tunnel(machine: str, remote_port: int = GRPC_PORT) -> Iterator[int]:
+def ssh_tunnel(machine: str, remote: str | int = GRPC_SOCKET) -> Iterator[int]:
     """
-    Forward a free local port to machine:remote_port via SSH.
+    Forward a free local port to the daemon's socket on machine via SSH, or to
+    a TCP port on the machine's loopback when remote is a port number.
     OrbStack VMs are reachable at <machine>.orb.local.
     Yields the local port number.
     """
+    target = f"127.0.0.1:{remote}" if isinstance(remote, int) else remote
     port = _free_port()
     proc = subprocess.Popen(
         [
             "ssh", *_SSH_OPTS,
             "-N",
-            "-L", f"127.0.0.1:{port}:127.0.0.1:{remote_port}",
+            "-L", f"127.0.0.1:{port}:{target}",
             f"root@{machine}.orb.local",
         ],
         stdout=subprocess.DEVNULL,

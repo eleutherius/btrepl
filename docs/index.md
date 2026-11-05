@@ -30,7 +30,7 @@ If no common snapshot exists, a full send is performed automatically. An interru
 
 `btrepl` can run in two ways, sharing the same replication engine:
 
-- **Daemon mode** — `btrepl serve` runs a gRPC server and an internal replication loop on the `interval` from the config. This is what the packages and the install script set up by default. See [gRPC API](grpc.md).
+- **Daemon mode** — `btrepl serve` runs a gRPC server (on a root-only Unix socket, or TCP with mutual TLS) and an internal replication loop on the `interval` from the config. This is what the packages and the install script set up by default. See [gRPC API](grpc.md).
 - **Timer mode** — a `btrepl.timer` systemd unit runs `btrepl run` once per tick. See [Systemd setup](systemd.md).
 
 ## Next steps

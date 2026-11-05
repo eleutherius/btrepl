@@ -1,0 +1,23 @@
+name: govulncheck
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: src/btrepl/go.mod
+    - name: govulncheck
+      working-directory: src/btrepl
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

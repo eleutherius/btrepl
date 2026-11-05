@@ -6,6 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/btrepl serve
+# The API socket /run/btrepl/btrepl.sock lives here; only root can open it.
+RuntimeDirectory=btrepl
+RuntimeDirectoryMode=0700
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal

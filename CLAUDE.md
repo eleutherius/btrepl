@@ -48,7 +48,7 @@ uv run pytest tests/integration/test_grpc.py::test_name -v   # single test
 uv run pytest tests/integration/ -v --destructive            # also run clear/standalone tests
 ```
 
-The pytest options `--spin-up`, `--teardown` and `--destructive` are defined in `tests/integration/conftest.py`. Tests marked `@pytest.mark.destructive` are skipped unless you pass `--destructive`. The tests reach the VMs through `orbctl run`. They reach gRPC through an SSH port-forward tunnel, because port 50051 isn't exposed to the host.
+The pytest options `--spin-up`, `--teardown` and `--destructive` are defined in `tests/integration/conftest.py`. Tests marked `@pytest.mark.destructive` are skipped unless you pass `--destructive`. The tests reach the VMs through `orbctl run`. They reach gRPC through an SSH tunnel that forwards a local port to the daemon's Unix socket `/run/btrepl/btrepl.sock`; `test_api.py` also starts a second daemon on TCP with mutual TLS.
 
 ### Lint
 
@@ -58,7 +58,7 @@ Lint runs through pre-commit (`pre-commit run --all-files`): `gofmt -w`, shellch
 
 **Two run modes that share one replication engine:**
 - **Timer mode:** `init-master` writes a `btrepl.timer` systemd unit (`internal/systemd`), and `add-slave` enables it. Each tick runs `btrepl run` for one cycle.
-- **Daemon mode:** `btrepl serve`. The packaged `deploy/btrepl.service` runs this, and the `.deb` postinst enables it. `internal/server.RunLoop` runs cycles on a ticker set to `cfg.Interval`. The gRPC `Run` RPC triggers a cycle early through a 1-slot channel (`runCh`); if a run is already queued, it returns `ok=false`.
+- **Daemon mode:** `btrepl serve`. The packaged `deploy/btrepl.service` runs this, and the `.deb` postinst enables it. `server.Listen` opens the API: by default the root-only Unix socket `/run/btrepl/btrepl.sock` (0600 in a 0700 dir), or TCP only with mutual TLS (`--tls-cert/--tls-key/--tls-client-ca`). Never add an unauthenticated TCP listener: the API can redirect replication. `internal/server.RunLoop` runs cycles on a ticker set to `cfg.Interval`. The gRPC `Run` RPC triggers a cycle early through a 1-slot channel (`runCh`); if a run is already queued, it returns `ok=false`.
 
 **Config is re-read from disk on every operation.** The server calls `config.Load(cfgPath)` on each cycle and RPC, and `AddSlave`/`DelSlave` persist through `config.Save`. `RunLoop` also re-reads `interval` every minute and resets its ticker. The YAML file at `/etc/btrepl/config.yaml` is the single source of truth, and no config state is held in memory.
 
