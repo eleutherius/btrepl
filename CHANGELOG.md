@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-11-05
+
+### Fixed
+
+- `install.sh` stopped with "no valid build provenance attestation" when an old `gh` without the `attestation` command (such as 2.46 from Debian) was logged in. It now skips the provenance check in that case, as it does without `gh`.
+
 ## [0.2.0] - 2026-11-05
 
 This release fixes a critical vulnerability: the gRPC API was open to the network without authentication ([GHSA-c424-8r7c-ccf3](https://github.com/eleutherius/btrepl/security/advisories/GHSA-c424-8r7c-ccf3)). Read [Upgrading from 0.1.0](#upgrading-from-010) before you upgrade.

@@ -175,8 +175,9 @@ fetch_sums() {
     SUMS_OK=1
 }
 
+# gh before 2.49 has no attestation command, and the check needs a login.
 USE_GH=0
-if has gh && gh auth status >/dev/null 2>&1; then
+if has gh && gh attestation verify --help >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     USE_GH=1
 fi
 
@@ -212,7 +213,7 @@ main() {
 
     fetch_sums
     if [ "$USE_GH" = "0" ]; then
-        say "gh is not installed or not logged in: skipping the build provenance check"
+        say "no logged-in gh with the attestation command: skipping the build provenance check"
     fi
     verify "$ASSET"
 
