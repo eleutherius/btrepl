@@ -8,6 +8,12 @@
 #   BTREPL_INSTALL_DIR  where to put the binary (default: /usr/local/bin)
 #   BTREPL_NO_DEPS=1    do not install btrfs-progs / openssh-client
 #   BTREPL_NO_SERVICE=1 do not install/enable the systemd unit
+#   BTREPL_INSECURE_SKIP_VERIFY=1
+#                       install even if the download cannot be verified
+#                       (no SHA256SUMS, no sha256 tool, no provenance)
+#
+# Downloads are checked against the release's SHA256SUMS, and against its
+# build provenance attestation when an authenticated `gh` is available.
 #
 # Supports Debian/Ubuntu, RHEL/Fedora/Rocky/Alma, openSUSE/SLES, Arch, Alpine
 # on amd64 and arm64.
@@ -18,6 +24,7 @@ REPO="eleutherius/btrepl"
 BINARY="btrepl"
 VERSION="${BTREPL_VERSION:-latest}"
 INSTALL_DIR="${BTREPL_INSTALL_DIR:-/usr/local/bin}"
+INSECURE="${BTREPL_INSECURE_SKIP_VERIFY:-0}"
 UNIT_DIR="/etc/systemd/system"
 
 say() { printf 'btrepl-installer: %s\n' "$*"; }
@@ -135,6 +142,64 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 ASSET="${BINARY}_linux_${ARCH}"
 
+# ── verification ──────────────────────────────────────────────────────────────
+
+unverified() {
+    # unverified <reason>: stop, unless the user opted out of verification
+    if [ "$INSECURE" = "1" ]; then
+        say "warning: $1; installing anyway because BTREPL_INSECURE_SKIP_VERIFY=1"
+    else
+        err "$1 (set BTREPL_INSECURE_SKIP_VERIFY=1 to install without verification)"
+    fi
+}
+
+sha256_check() {
+    # sha256_check: verify the "hash  file" lines on stdin, in the current dir
+    if has sha256sum; then
+        sha256sum -c - >/dev/null
+    else
+        shasum -a 256 -c - >/dev/null
+    fi
+}
+
+SUMS_OK=0
+fetch_sums() {
+    if ! download "$BASE_URL/SHA256SUMS" "$TMP/SHA256SUMS" 2>/dev/null; then
+        unverified "SHA256SUMS not found in the release"
+        return
+    fi
+    if ! has sha256sum && ! has shasum; then
+        unverified "neither sha256sum nor shasum is installed"
+        return
+    fi
+    SUMS_OK=1
+}
+
+USE_GH=0
+if has gh && gh auth status >/dev/null 2>&1; then
+    USE_GH=1
+fi
+
+verify() {
+    # verify <file in $TMP>: checksum and build provenance
+    if [ "$SUMS_OK" = "1" ]; then
+        line=$(grep " $1\$" "$TMP/SHA256SUMS" || true)
+        if [ -z "$line" ]; then
+            unverified "$1 is not listed in SHA256SUMS"
+        else
+            (cd "$TMP" && printf '%s\n' "$line" | sha256_check) || err "checksum mismatch for $1"
+            say "checksum OK: $1"
+        fi
+    fi
+    if [ "$USE_GH" = "1" ]; then
+        if gh attestation verify "$TMP/$1" --repo "$REPO" >/dev/null 2>&1; then
+            say "build provenance OK: $1"
+        else
+            unverified "no valid build provenance attestation for $1 from $REPO"
+        fi
+    fi
+}
+
 main() {
     say "platform: linux/$ARCH, distro: ${DISTRO_ID:-unknown}, package manager: $PKG_MANAGER"
 
@@ -145,40 +210,45 @@ main() {
     say "downloading $ASSET ($VERSION)"
     download "$BASE_URL/$ASSET" "$TMP/$ASSET" || err "failed to download $BASE_URL/$ASSET"
 
-    if download "$BASE_URL/SHA256SUMS" "$TMP/SHA256SUMS" 2>/dev/null; then
-        if has sha256sum; then
-            (cd "$TMP" && grep " $ASSET\$" SHA256SUMS | sha256sum -c - >/dev/null) \
-                || err "checksum mismatch for $ASSET"
-            say "checksum OK"
+    fetch_sums
+    if [ "$USE_GH" = "0" ]; then
+        say "gh is not installed or not logged in: skipping the build provenance check"
+    fi
+    verify "$ASSET"
+
+    # Download and verify everything before installing anything.
+    service=0
+    if [ "${BTREPL_NO_SERVICE:-0}" != "1" ]; then
+        if has_systemd; then
+            fetch_service
+            service=1
         else
-            say "warning: sha256sum not found, skipping checksum verification"
+            say "systemd not detected, skipping service install"
         fi
-    else
-        say "warning: SHA256SUMS not found in release, skipping checksum verification"
     fi
 
     $SUDO mkdir -p "$INSTALL_DIR"
     $SUDO install -m 755 "$TMP/$ASSET" "$INSTALL_DIR/$BINARY"
     say "installed $INSTALL_DIR/$BINARY"
 
-    if [ "${BTREPL_NO_SERVICE:-0}" != "1" ]; then
+    if [ "$service" = "1" ]; then
         install_service
     fi
 
     say "done. Next: $BINARY init-master  (see https://github.com/$REPO#quick-start)"
 }
 
-install_service() {
-    if ! has systemctl || [ ! -d /run/systemd/system ]; then
-        say "systemd not detected, skipping service install"
-        return
-    fi
+has_systemd() { has systemctl && [ -d /run/systemd/system ]; }
 
+fetch_service() {
     download "$BASE_URL/$BINARY.service" "$TMP/$BINARY.service" \
         || err "failed to download $BINARY.service"
+    verify "$BINARY.service"
     # The unit hardcodes /usr/local/bin; follow a custom install dir.
     sed "s|/usr/local/bin/$BINARY|$INSTALL_DIR/$BINARY|" "$TMP/$BINARY.service" > "$TMP/$BINARY.service.out"
+}
 
+install_service() {
     $SUDO install -m 644 "$TMP/$BINARY.service.out" "$UNIT_DIR/$BINARY.service"
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable "$BINARY.service"
