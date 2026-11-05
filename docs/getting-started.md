@@ -22,6 +22,8 @@ ssh_identity: /root/.ssh/id_ed25519
 ssh_user: root
 ssh_port: 22
 ssh_known_hosts: /root/.ssh/known_hosts
+ssh_command_timeout: 2m
+send_idle_timeout: 10m
 snapshot_dir: .snapshots
 snapshot_prefix: btrepl_
 keep_sender: 428       # snapshots to keep on master
@@ -39,6 +41,7 @@ btrepl add-slave -s 192.168.1.10
 ```
 
 - Connects to the slave via SSH and records its host key in `ssh_known_hosts` if it is new (see [SSH access](ssh.md)).
+- If btrepl is installed on the slave, restricts the master's key there to the commands replication needs.
 - Creates the snapshot directory.
 - Adds the slave to the config.
 - Enables and starts `btrepl.timer` (see [Systemd setup](systemd.md)).

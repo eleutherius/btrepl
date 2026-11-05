@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSlaveAddr(t *testing.T) {
@@ -38,5 +39,22 @@ func TestLoadOldConfigGetsSSHDefaults(t *testing.T) {
 	}
 	if c.SSHPort != 22 || c.SSHKnownHosts != "/root/.ssh/known_hosts" || c.BtrfsRoot != "/data" {
 		t.Fatalf("got %+v", c)
+	}
+}
+
+func TestTimeouts(t *testing.T) {
+	c := Default()
+	if c.CommandTimeout() != 2*time.Minute || c.SendIdleTimeout() != 10*time.Minute {
+		t.Fatalf("defaults: %s %s", c.CommandTimeout(), c.SendIdleTimeout())
+	}
+	c.SSHCmdTimeout, c.SendIdle = "30s", "1h"
+	if c.CommandTimeout() != 30*time.Second || c.SendIdleTimeout() != time.Hour {
+		t.Fatalf("set: %s %s", c.CommandTimeout(), c.SendIdleTimeout())
+	}
+	for _, bad := range []string{"", "0s", "-1m", "soon"} {
+		c.SSHCmdTimeout = bad
+		if c.CommandTimeout() != 2*time.Minute {
+			t.Errorf("%q: got %s", bad, c.CommandTimeout())
+		}
 	}
 }

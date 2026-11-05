@@ -24,7 +24,7 @@
 | Failover / promote replica | `btrepl standalone` | Manual (`btrfs subvolume snapshot`) | — |
 | Rollback of the running system | No | No | Yes (`snapper rollback`, pre/post snapshots around package updates) |
 | Compression, rate limit, raw/encrypted targets | No | Yes | No |
-| Restricted SSH on target | Yes (`btrepl ssh-filter`), root with a key | Yes (`ssh_filter_btrbk.sh`) | — |
+| Restricted SSH on target | Yes, set up by `add-slave` (`btrepl ssh-filter`), root with a key | Yes (`ssh_filter_btrbk.sh`) | — |
 | Filesystems | btrfs | btrfs | btrfs, LVM thin, ext4 (limited) |
 
 The information about btrbk and snapper reflects their documentation at the time of writing. Check the projects for current features.
