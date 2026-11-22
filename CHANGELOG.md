@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- The latest `install.sh` is served from the site: `curl -LsSf https://eleutherius.github.io/btrepl/install.sh | sh`. The release URL keeps working.
+- A signed APT repository at `https://eleutherius.github.io/btrepl/apt` with the `.deb` packages of all releases. See [Installation](https://eleutherius.github.io/btrepl/installation/#apt-repository-debian-ubuntu).
+
+### Changed
+
+- The `.deb` package depends on `btrfs-progs` and `openssh-client`; the `.rpm` on `openssh-clients`.
+
 ## [0.2.1] - 2026-11-05
 
 ### Fixed

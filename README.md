@@ -20,10 +20,10 @@ It runs either as a **daemon** (`btrepl serve`, with a gRPC API for triggering r
 ## Install
 
 ```bash
-curl -LsSf https://github.com/eleutherius/btrepl/releases/latest/download/install.sh | sh
+curl -LsSf https://eleutherius.github.io/btrepl/install.sh | sh
 ```
 
-The script supports Debian/Ubuntu, Fedora/RHEL, openSUSE, Arch and Alpine on `amd64` and `arm64`. `.deb` and `.rpm` packages are also attached to every [release](https://github.com/eleutherius/btrepl/releases). See [Installation](https://eleutherius.github.io/btrepl/installation/) for options, packages and building from source.
+The script supports Debian/Ubuntu, Fedora/RHEL, openSUSE, Arch and Alpine on `amd64` and `arm64`. Debian and Ubuntu can use the [APT repository](https://eleutherius.github.io/btrepl/installation/#apt-repository-debian-ubuntu) instead; `.deb` and `.rpm` files are also attached to every [release](https://github.com/eleutherius/btrepl/releases). See [Installation](https://eleutherius.github.io/btrepl/installation/) for options, packages and building from source.
 
 ## Quick start
 
