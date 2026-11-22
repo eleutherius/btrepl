@@ -1,27 +1,41 @@
 """
 Cluster lifecycle and shared fixtures for btrepl integration tests.
 
-Topology: btrepl1 (master) + btrepl2/3/4 (slaves) on OrbStack.
-All remote access is via SSH — either orbctl-exec for CLI or SSH port-forwarding
-for gRPC (the daemon listens on a root-only Unix socket, not on the network).
+Topology: btrepl1 (master) + btrepl2/3/4 (slaves), Incus instances.
+Everything goes through the incus client: `incus exec` runs commands,
+`incus file push` copies files, and gRPC reaches the daemon's root-only Unix
+socket through a local port bridged with `incus exec ... socat`. The host
+needs no SSH or network access to the instances, so a remote Incus server
+works the same as a local one.
 
 Pre-requisites:
-  - OrbStack running with a base image named SOURCE_MACHINE
-  - arm64 .deb already built: make deb
-  - SSH keys: OrbStack cloned VMs inherit the host's authorized_keys by default
+  - an Incus server the `incus` client can reach (local, `incus remote`, or
+    Colima with `--runtime incus`)
+  - a .deb for the instances' architecture: make deb
+
+Settings (environment variables):
+  BTREPL_INCUS_REMOTE  Incus remote to use (default: the current one)
+  BTREPL_INCUS_TYPE    vm (default) or container. Containers are privileged
+                       and get the host's loop devices; use them where there
+                       is no KVM, e.g. Colima on Apple M1/M2.
+  BTREPL_INCUS_IMAGE   image for the cluster (default: images:debian/13)
+  BTREPL_TEST_DEB      .deb to install (default: newest build/*_<arch>.deb)
 
 Quick start:
     uv run pytest tests/integration/ -v --spin-up               # spin up + test
     uv run pytest tests/integration/ -v --spin-up --teardown    # spin up + test + destroy
-    uv run pytest tests/integration/ -v                         # test only (VMs already up)
+    uv run pytest tests/integration/ -v                         # test only (instances already up)
     uv run pytest tests/integration/ -v --destructive           # also run destructive tests
 """
 
 import os
+import select
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Generator, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -38,7 +52,10 @@ from btrepl import BtreplClient  # noqa: E402
 MASTER = "btrepl1"
 SLAVES = ["btrepl2", "btrepl3", "btrepl4"]
 ALL_NODES = [MASTER] + SLAVES
-SOURCE_MACHINE = "debian-arm-13"
+
+INCUS_REMOTE = os.environ.get("BTREPL_INCUS_REMOTE", "")
+INCUS_TYPE = os.environ.get("BTREPL_INCUS_TYPE", "vm")
+INCUS_IMAGE = os.environ.get("BTREPL_INCUS_IMAGE", "images:debian/13")
 
 BTRFS_IMG   = "/btrfs.img"
 BTRFS_MNT   = "/btrfs"
@@ -47,8 +64,14 @@ SUBVOLS     = ["@eventsPictures", "@reports"]
 SNAP_DIR    = ".snapshots"
 SNAP_PREFIX = "btrepl_"
 GRPC_SOCKET = "/run/btrepl/btrepl.sock"
+# Packages every node needs besides btrepl. pv slows down receives in
+# test_failures.py; socat bridges the gRPC socket to the host.
+NODE_PACKAGES = "btrfs-progs openssh-server openssh-client socat nftables pv openssl iproute2 procps"
 
 REPO_ROOT = Path(__file__).parent.parent.parent
+
+if INCUS_TYPE not in ("vm", "container"):
+    raise ValueError(f"BTREPL_INCUS_TYPE must be vm or container, not {INCUS_TYPE!r}")
 
 # ── pytest options / markers ──────────────────────────────────────────────────
 
@@ -56,15 +79,23 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--spin-up", action="store_true", default=False,
-        help="Create/start the 4-node OrbStack cluster before tests.",
+        help="Create/start the 4-node Incus cluster before tests.",
     )
     parser.addoption(
         "--teardown", action="store_true", default=False,
-        help="Delete all cluster VMs after tests.",
+        help="Delete all cluster instances after tests.",
     )
     parser.addoption(
         "--destructive", action="store_true", default=False,
         help="Also run destructive tests (clear, standalone). Off by default.",
+    )
+    parser.addoption(
+        "--distros", action="store_true", default=False,
+        help="Run the package install tests on fresh instances of several distros.",
+    )
+    parser.addoption(
+        "--channels", action="store_true", default=False,
+        help="Run the tests of the published install.sh, APT and RPM repositories.",
     )
 
 
@@ -73,62 +104,100 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "destructive: modifies cluster state irreversibly (skipped unless --destructive)",
     )
+    config.addinivalue_line("markers", "distros: package install tests (skipped unless --distros)")
+    config.addinivalue_line("markers", "channels: published install channels (skipped unless --channels)")
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    if not config.getoption("--destructive"):
-        skip = pytest.mark.skip(reason="pass --destructive to run")
-        for item in items:
-            if item.get_closest_marker("destructive"):
-                item.add_marker(skip)
+    for marker, option in (("destructive", "--destructive"), ("distros", "--distros"),
+                           ("channels", "--channels")):
+        if not config.getoption(option):
+            skip = pytest.mark.skip(reason=f"pass {option} to run")
+            for item in items:
+                if item.get_closest_marker(marker):
+                    item.add_marker(skip)
+    # Destructive tests detach slaves and delete snapshots: run them after
+    # everything else, in their original order.
+    items.sort(key=lambda item: item.get_closest_marker("destructive") is not None)
 
 
-# ── remote execution via orbctl ───────────────────────────────────────────────
+# ── remote execution via incus ────────────────────────────────────────────────
+
+
+def ref(machine: str) -> str:
+    """Instance name as the incus client expects it, with the remote if set."""
+    return f"{INCUS_REMOTE}:{machine}" if INCUS_REMOTE else machine
+
+
+def incus(*args: str, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["incus", *args], capture_output=True, text=True, check=check, timeout=timeout)
 
 
 def rem(machine: str, cmd: str, *, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a bash command on an OrbStack machine as root."""
-    return subprocess.run(
-        ["orbctl", "run", "-m", machine, "-u", "root", "bash", "-c", cmd],
-        capture_output=True, text=True, check=check,
+    """Run a bash command on an instance as root."""
+    r = subprocess.run(
+        ["incus", "exec", ref(machine), "--", "bash", "-c", cmd],
+        capture_output=True, text=True,
     )
+    if check and r.returncode != 0:
+        raise subprocess.CalledProcessError(r.returncode, f"[{machine}] {cmd}", r.stdout, r.stderr)
+    return r
 
 
 def push(machine: str, local: Path | str, remote: str) -> None:
-    subprocess.run(["orbctl", "push", "-m", machine, str(local), remote], check=True)
+    incus("file", "push", str(local), f"{ref(machine)}{remote}")
 
 
 def machine_exists(name: str) -> bool:
-    r = subprocess.run(["orbctl", "list"], capture_output=True, text=True)
-    return any(
-        line.split() and line.split()[0] == name
-        for line in r.stdout.splitlines()
-    )
+    return incus("info", ref(name), check=False).returncode == 0
 
 
-def wait_ssh(machine: str, retries: int = 45, delay: float = 3.0) -> None:
-    print(f"  [{machine}] waiting for ssh ...", flush=True)
-    for _ in range(retries):
-        if rem(machine, "echo ok", check=False).returncode == 0:
+def wait_ready(machine: str, timeout: float = 240.0) -> None:
+    """Wait until systemd has booted the instance and it has an IPv4 address."""
+    print(f"  [{machine}] waiting for boot ...", flush=True)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        r = rem(machine, "systemctl is-system-running --wait; hostname -I", check=False)
+        lines = r.stdout.split()
+        if r.returncode == 0 and len(lines) >= 2 and lines[0] in ("running", "degraded"):
             return
-        time.sleep(delay)
-    raise TimeoutError(f"{machine} not reachable after {retries * delay:.0f} s")
+        time.sleep(2)
+    raise TimeoutError(f"{machine} not ready after {timeout:.0f} s")
+
 
 
 def get_ip(machine: str) -> str:
     return rem(machine, "hostname -I | awk '{print $1}'").stdout.strip()
 
 
-# ── SSH port-forwarding tunnel ────────────────────────────────────────────────
+def restart(machine: str) -> None:
+    """Hard-restart an instance, as a power cut would, and wait for it."""
+    incus("restart", "--force", ref(machine))
+    wait_ready(machine)
 
-_SSH_OPTS = [
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "ExitOnForwardFailure=yes",
-    "-o", "ConnectTimeout=10",
-    "-o", "BatchMode=yes",
-]
+
+def launch(machine: str, image: str = INCUS_IMAGE) -> None:
+    """Create and start an instance; containers get the host's loop devices."""
+    args = ["launch", image, ref(machine)]
+    if INCUS_TYPE == "vm":
+        args += ["--vm", "-c", "limits.cpu=2", "-c", "limits.memory=1536MiB",
+                 "-c", "security.secureboot=false"]
+    else:
+        # A btrfs image file is mounted with a loop device, which needs a
+        # privileged container and the host's /dev/loop*.
+        args += ["-c", "security.privileged=true", "-c", "security.nesting=true"]
+    incus(*args)
+    if INCUS_TYPE == "container":
+        incus("config", "device", "add", ref(machine), "loop-control",
+              "unix-char", "path=/dev/loop-control", "required=false")
+        for i in range(32):
+            incus("config", "device", "add", ref(machine), f"loop{i}",
+                  "unix-block", f"path=/dev/loop{i}", "required=false")
+
+
+# ── gRPC bridge ───────────────────────────────────────────────────────────────
 
 
 def _free_port() -> int:
@@ -137,43 +206,74 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_local_port(port: int, timeout: float = 15.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+def _pump(conn: socket.socket, proc: subprocess.Popen) -> None:
+    """Copy bytes both ways between a local connection and socat's stdio."""
+    assert proc.stdin is not None and proc.stdout is not None
+    out_fd = proc.stdout.fileno()
+    try:
+        while True:
+            ready, _, _ = select.select([conn, out_fd], [], [], 1.0)
+            if proc.poll() is not None and not ready:
                 return
-        except OSError:
-            time.sleep(0.3)
-    raise TimeoutError(f"local port {port} not open after {timeout} s")
+            if conn in ready:
+                data = conn.recv(65536)
+                if not data:
+                    proc.stdin.close()
+                    return
+                proc.stdin.write(data)
+                proc.stdin.flush()
+            if out_fd in ready:
+                data = os.read(out_fd, 65536)
+                if not data:
+                    return
+                conn.sendall(data)
+    except (OSError, ValueError):
+        return
+    finally:
+        conn.close()
+        proc.kill()
+        proc.wait()
 
 
 @contextmanager
-def ssh_tunnel(machine: str, remote: str | int = GRPC_SOCKET) -> Iterator[int]:
+def tunnel(machine: str, remote: str | int = GRPC_SOCKET) -> Iterator[int]:
     """
-    Forward a free local port to the daemon's socket on machine via SSH, or to
-    a TCP port on the machine's loopback when remote is a port number.
-    OrbStack VMs are reachable at <machine>.orb.local.
+    Listen on a free local port and connect each connection to the daemon's
+    Unix socket on machine, or to a TCP port on the machine's loopback when
+    remote is a port number, through `incus exec ... socat`.
     Yields the local port number.
     """
-    target = f"127.0.0.1:{remote}" if isinstance(remote, int) else remote
+    target = f"TCP:127.0.0.1:{remote}" if isinstance(remote, int) else f"UNIX-CONNECT:{remote}"
     port = _free_port()
-    proc = subprocess.Popen(
-        [
-            "ssh", *_SSH_OPTS,
-            "-N",
-            "-L", f"127.0.0.1:{port}:{target}",
-            f"root@{machine}.orb.local",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    server = socket.create_server(("127.0.0.1", port))
+    server.settimeout(0.5)
+    stop = threading.Event()
+
+    def serve() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            proc = subprocess.Popen(
+                ["incus", "exec", "--force-noninteractive", ref(machine), "--",
+                 "socat", "-", target],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            threading.Thread(target=_pump, args=(conn, proc), daemon=True).start()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
     try:
-        _wait_local_port(port)
         yield port
     finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+        stop.set()
+        thread.join(timeout=5)
+        server.close()
+
 
 
 # ── cluster setup / teardown ──────────────────────────────────────────────────
@@ -183,8 +283,11 @@ def _install_node(machine: str, deb: Path) -> None:
     """Install btrfs tools + btrepl package on a single node."""
     rem(machine, f"""
         export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y -qq btrfs-progs
+        if ! dpkg -s {NODE_PACKAGES} >/dev/null 2>&1; then
+            apt-get update -qq
+            apt-get install -y -qq {NODE_PACKAGES}
+        fi
+        systemctl enable --now ssh
         if [ ! -f {BTRFS_IMG} ]; then
             fallocate -l 2G {BTRFS_IMG}
             mkfs.btrfs {BTRFS_IMG}
@@ -202,6 +305,15 @@ def _install_node(machine: str, deb: Path) -> None:
     push(machine, deb, "/tmp/btrepl.deb")
     rem(machine, "dpkg -i /tmp/btrepl.deb || apt-get install -f -y -qq")
     rem(machine, "systemctl stop btrepl.service 2>/dev/null || true")
+
+
+def find_deb(arch: str) -> Path:
+    if os.environ.get("BTREPL_TEST_DEB"):
+        return Path(os.environ["BTREPL_TEST_DEB"])
+    debs = sorted(REPO_ROOT.glob(f"build/*_{arch}.deb"), key=lambda p: p.stat().st_mtime)
+    if not debs:
+        raise FileNotFoundError(f"No {arch} .deb in build/ — run: make deb")
+    return debs[-1]
 
 
 def _write_config(machine: str) -> None:
@@ -226,31 +338,31 @@ def _write_config(machine: str) -> None:
 
 
 def _setup_cluster() -> None:
-    debs = sorted(REPO_ROOT.glob("build/*arm64.deb"))
-    if not debs:
-        raise FileNotFoundError("No arm64 .deb in build/ — run: make deb")
-    deb = debs[-1]
-    print(f"\n[btrepl] package: {deb.name}", flush=True)
-
-    # 1. clone missing VMs
+    # 1. create missing instances, start all and wait for boot
+    print(f"\n[btrepl] incus {INCUS_TYPE}s from {INCUS_IMAGE}", flush=True)
     for m in ALL_NODES:
         if not machine_exists(m):
-            print(f"[btrepl] cloning {SOURCE_MACHINE} → {m} ...", flush=True)
-            subprocess.run(["orbctl", "clone", SOURCE_MACHINE, m], check=True)
+            print(f"[btrepl] launching {m} ...", flush=True)
+            launch(m)
+        else:
+            incus("start", ref(m), check=False)
+    with ThreadPoolExecutor(len(ALL_NODES)) as pool:
+        list(pool.map(wait_ready, ALL_NODES))
 
-    # 2. start all VMs and wait for SSH
-    for m in ALL_NODES:
-        subprocess.run(["orbctl", "start", m], capture_output=True)
-    for m in ALL_NODES:
-        wait_ssh(m)
+    arch = rem(MASTER, "dpkg --print-architecture").stdout.strip()
+    deb = find_deb(arch)
+    print(f"[btrepl] package: {deb.name}", flush=True)
 
-    # 3. install btrfs + btrepl, write config on every node
-    for m in ALL_NODES:
+    # 2. install btrfs + btrepl, write config on every node
+    def provision(m: str) -> None:
         print(f"[btrepl] provisioning {m} ...", flush=True)
         _install_node(m, deb)
         _write_config(m)
 
-    # 4. generate SSH key on master, authorize it on every slave
+    with ThreadPoolExecutor(len(ALL_NODES)) as pool:
+        list(pool.map(provision, ALL_NODES))
+
+    # 3. generate SSH key on master, authorize it on every slave
     rem(MASTER, f"""
         mkdir -p /root/.ssh && chmod 700 /root/.ssh
         [ -f {SSH_KEY} ] || ssh-keygen -t ed25519 -N '' -f {SSH_KEY} -q
@@ -267,13 +379,13 @@ def _setup_cluster() -> None:
         """)
         rem(MASTER, f"ssh-keyscan -H {slave_ip} >> /root/.ssh/known_hosts 2>/dev/null || true")
 
-    # 5. init master, add all three slaves
+    # 4. init master, add all three slaves
     rem(MASTER, "btrepl init-master")
     for slave in SLAVES:
         slave_ip = get_ip(slave)
         rem(MASTER, f"btrepl add-slave -s {slave_ip}")
 
-    # 6. start btrepl daemon on every node
+    # 5. start btrepl daemon on every node
     for m in ALL_NODES:
         rem(m, "systemctl daemon-reload && systemctl enable btrepl.service && systemctl start btrepl.service")
         rem(m, "systemctl is-active btrepl.service")
@@ -285,7 +397,7 @@ def _teardown_cluster() -> None:
     print("\n[btrepl] tearing down cluster ...", flush=True)
     for m in ALL_NODES:
         if machine_exists(m):
-            subprocess.run(["orbctl", "delete", "-f", m], check=False)
+            incus("delete", "--force", ref(m), check=False)
 
 
 # ── session-scoped fixtures ───────────────────────────────────────────────────
@@ -309,8 +421,8 @@ def slave_ips() -> list[str]:
 
 @pytest.fixture(scope="session")
 def master_client() -> Generator[BtreplClient, None, None]:
-    """Long-lived BtreplClient for btrepl1, connected via SSH tunnel."""
-    with ssh_tunnel(MASTER) as port:
+    """Long-lived BtreplClient for btrepl1, connected via a bridge."""
+    with tunnel(MASTER) as port:
         with BtreplClient(f"127.0.0.1:{port}", timeout=15.0) as c:
             yield c
 
@@ -321,7 +433,7 @@ def slave_clients() -> Generator[list[BtreplClient], None, None]:
     with ExitStack() as stack:
         clients: list[BtreplClient] = []
         for slave in SLAVES:
-            port = stack.enter_context(ssh_tunnel(slave))
+            port = stack.enter_context(tunnel(slave))
             client = BtreplClient(f"127.0.0.1:{port}", timeout=15.0)
             stack.enter_context(client)
             clients.append(client)
@@ -331,7 +443,7 @@ def slave_clients() -> Generator[list[BtreplClient], None, None]:
 @pytest.fixture(scope="session")
 def grpc_client_factory() -> Iterator[object]:
     """
-    Factory for creating short-lived gRPC clients via fresh SSH tunnels.
+    Factory for creating short-lived gRPC clients via fresh bridges.
     Use for WatchLogs tests or any test that needs an independent channel.
 
     Usage:
@@ -340,7 +452,7 @@ def grpc_client_factory() -> Iterator[object]:
     """
     @contextmanager
     def _make(machine: str = MASTER, timeout: float = 30.0) -> Iterator[BtreplClient]:
-        with ssh_tunnel(machine) as port:
+        with tunnel(machine) as port:
             with BtreplClient(f"127.0.0.1:{port}", timeout=timeout) as c:
                 yield c
 
@@ -351,7 +463,7 @@ def grpc_client_factory() -> Iterator[object]:
 
 
 class NodeCLI:
-    """Runs btrepl CLI commands on a remote machine via orbctl."""
+    """Runs btrepl CLI commands on an instance via incus exec."""
 
     def __init__(self, machine: str) -> None:
         self.machine = machine
@@ -359,7 +471,7 @@ class NodeCLI:
     def __call__(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run: btrepl <args>"""
         return subprocess.run(
-            ["orbctl", "run", "-m", self.machine, "-u", "root", "btrepl"] + list(args),
+            ["incus", "exec", ref(self.machine), "--", "btrepl"] + list(args),
             capture_output=True, text=True, check=check,
         )
 

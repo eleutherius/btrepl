@@ -18,7 +18,7 @@ PROTO_GO    := $(GO_ROOT)/api/btrepl.pb.go $(GO_ROOT)/api/btrepl_grpc.pb.go
 PROTO_PY    := src/pybtrepl/btrepl/_pb/btrepl_pb2.py src/pybtrepl/btrepl/_pb/btrepl_pb2_grpc.py
 
 .PHONY: all proto proto-go proto-py build deb rpm packages clean \
-        test-integration test-integration-clean \
+        test-integration test-integration-clean test-distros test-channels \
         cluster-up cluster-down
 
 all: deb
@@ -93,7 +93,8 @@ clean:
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
-# Create/start the 4-node OrbStack cluster (1 master + 3 slaves).
+# Create/start the 4-node Incus cluster (1 master + 3 slaves).
+# BTREPL_INCUS_TYPE=container for hosts without KVM; see tests/integration/conftest.py.
 cluster-up: deb
 	uv run python -c \
 	    "import sys; sys.path.insert(0,'tests/integration'); \
@@ -120,3 +121,11 @@ test-integration-up: deb
 test-integration-clean: deb
 	uv pip install -q -e .
 	uv run pytest tests/integration/ -v --spin-up --teardown
+
+# Install the packages from build/ on fresh instances of several distros.
+test-distros: packages
+	uv run pytest tests/integration/test_install.py -v --distros
+
+# Install from the site: install.sh, the APT and RPM repositories.
+test-channels:
+	uv run pytest tests/integration/test_install.py -v --channels

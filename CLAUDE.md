@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `src/btrepl/`: the Go module (`github.com/eleutherius/btrepl`). It holds the CLI, the gRPC daemon and the proto. **The Go module root is here, not at the repo root**, so run `go` commands with `-C src/btrepl` or from inside that directory.
 - `src/pybtrepl/`: a Python gRPC client package (`btrepl.BtreplClient`) that wraps generated stubs in `btrepl/_pb/`.
-- `tests/integration/`: pytest integration tests. They run against a real 4-VM OrbStack cluster. Go unit tests (`*_test.go`) cover only the pure logic: parsing, parent choice, prune plans.
+- `tests/integration/`: pytest integration tests. They run against a real 4-node Incus cluster (VMs, or privileged containers). Go unit tests (`*_test.go`) cover only the pure logic: parsing, parent choice, prune plans.
 
 README install/build paths such as `./cmd/btrepl` and `api/btrepl.proto` date from before the move to `src/btrepl/`. The real paths are `src/btrepl/cmd/btrepl` and `src/btrepl/api/btrepl.proto`.
 
@@ -36,19 +36,21 @@ make proto          # or: make proto-go / make proto-py
 
 ### Integration tests
 
-Requirements: OrbStack with a base VM named `debian-arm-13`, plus an arm64 `.deb` in `build/` (from `make deb`). The Python env is managed with `uv` from the root `pyproject.toml`, which installs `src/pybtrepl` as a package.
+Requirements: an Incus server that the `incus` client can reach (local, an `incus remote`, or Colima with `--runtime incus`), plus a `.deb` for the instances' architecture in `build/` (from `make deb`). The Python env is managed with `uv` from the root `pyproject.toml`, which installs `src/pybtrepl` as a package. Settings are environment variables, documented at the top of `tests/integration/conftest.py`: `BTREPL_INCUS_TYPE` (`vm` by default, `container` where there is no KVM), `BTREPL_INCUS_IMAGE` (default `images:debian/13`), `BTREPL_INCUS_REMOTE`, `BTREPL_TEST_DEB`.
 
 ```bash
 make cluster-up                 # create btrepl1 (master) + btrepl2-4 (slaves)
 make test-integration           # run against an already-running cluster
 make test-integration-clean     # build deb, spin up, test, tear down
 make cluster-down
+make test-distros               # install build/ packages on fresh instances of several distros
+make test-channels              # install.sh, APT and RPM repositories from the site
 
 uv run pytest tests/integration/test_grpc.py::test_name -v   # single test
 uv run pytest tests/integration/ -v --destructive            # also run clear/standalone tests
 ```
 
-The pytest options `--spin-up`, `--teardown` and `--destructive` are defined in `tests/integration/conftest.py`. Tests marked `@pytest.mark.destructive` are skipped unless you pass `--destructive`. The tests reach the VMs through `orbctl run`. They reach gRPC through an SSH tunnel that forwards a local port to the daemon's Unix socket `/run/btrepl/btrepl.sock`; `test_api.py` also starts a second daemon on TCP with mutual TLS.
+The pytest options `--spin-up`, `--teardown`, `--destructive`, `--distros` and `--channels` are defined in `tests/integration/conftest.py`. Tests marked `@pytest.mark.destructive` are skipped unless you pass `--destructive`, and always run after the others. Everything reaches the instances through the incus client: `incus exec` for commands, `incus file push` for files, and gRPC through a local port bridged to the daemon's Unix socket `/run/btrepl/btrepl.sock` with `incus exec ... socat` (`tunnel` in conftest); `test_api.py` also starts a second daemon on TCP with mutual TLS. Shared helpers (`snaps`, `run_cycle`, `sends`, `manifest`) live in `tests/integration/helpers.py`. `test_integrity.py` compares the trees on master and slaves entry by entry; `test_failures.py` injects failures mid-send (packet drop with nft, hard restart, full disk, instance off), slowing receives down with a `pv` wrapper in `/usr/local/sbin/btrfs`. `.github/workflows/integration.yml` runs the suite on privileged containers on a GitHub runner.
 
 ### Lint
 

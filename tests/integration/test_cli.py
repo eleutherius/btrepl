@@ -2,7 +2,7 @@
 CLI interface tests.
 
 Every command is executed on the remote machine via:
-    orbctl run -m <machine> -u root btrepl <args>
+    incus exec <machine> -- btrepl <args>
 
 No local Python gRPC client is used here — this validates the binary's
 command-line interface independently of the gRPC layer.

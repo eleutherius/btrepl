@@ -1,0 +1,58 @@
+# Integration tests on an Incus cluster of privileged containers on the
+# runner: the full suite with destructive tests, and on demand the package
+# install tests on several distros.
+name: integration
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Makefile'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/integration.yml'
+  workflow_dispatch:
+    inputs:
+      distros:
+        description: Also run the package install tests on several distros
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  cluster:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BTREPL_INCUS_TYPE: container
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/btrepl/go.mod
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build packages
+        run: make packages
+
+      - name: Set up Incus
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq incus
+          sudo modprobe btrfs loop
+          sudo incus admin init --auto
+          # Docker's FORWARD policy drops the instances' traffic to the internet.
+          sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT || true
+          sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT || true
+          sudo usermod -aG incus-admin "$USER"
+
+      - name: Integration tests
+        run: sg incus-admin -c "uv run pytest tests/integration/ -v --spin-up --teardown --destructive --timeout 600"
+
+      - name: Package install tests
+        if: inputs.distros
+        run: sg incus-admin -c "uv run pytest tests/integration/test_install.py -v --distros --timeout 900"

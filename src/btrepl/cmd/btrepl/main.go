@@ -29,14 +29,18 @@ const (
 
 var cfgPath string
 
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	bc := logbroadcast.New(slog.NewTextHandler(os.Stderr, nil))
 	log := slog.New(bc)
 	slog.SetDefault(log)
 
 	root := &cobra.Command{
-		Use:   "btrepl",
-		Short: "btrfs geo-replication manager",
+		Use:     "btrepl",
+		Short:   "btrfs geo-replication manager",
+		Version: version,
 	}
 	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", config.DefaultPath, "config file")
 

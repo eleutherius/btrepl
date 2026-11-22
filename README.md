@@ -54,7 +54,7 @@ The master needs key-based root SSH access to each slave, and `btrfs-progs` on b
 
 - [`src/btrepl/`](src/btrepl/) — Go module: CLI, gRPC daemon, [proto](src/btrepl/api/btrepl.proto)
 - [`src/pybtrepl/`](src/pybtrepl/) — Python gRPC client
-- [`tests/integration/`](tests/integration/) — pytest integration tests against an OrbStack VM cluster
+- [`tests/integration/`](tests/integration/) — pytest integration tests against an Incus cluster (VMs or containers)
 - [`docs/`](docs/) — MkDocs sources of the documentation site
 
 Build with `make build` (binaries), `make deb` / `make rpm` (packages), or `make packages` (both).

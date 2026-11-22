@@ -7,67 +7,11 @@ stopped for this module so that no daemon cycle runs in between.
 """
 
 import re
-from dataclasses import dataclass
 
 import pytest
 
-from conftest import BTRFS_MNT, MASTER, SLAVES, SNAP_DIR, SNAP_PREFIX, SSH_KEY, SUBVOLS, rem
-
-CONFIG = "/etc/btrepl/config.yaml"
-SENDING = re.compile(r'msg=sending snap=(\S+) parent=("[^"]*"|\S+) slave=(\S+)')
-
-
-@dataclass
-class Snap:
-    name: str
-    uuid: str
-    received_uuid: str
-    read_only: bool
-
-    @property
-    def path(self) -> str:
-        return f"{BTRFS_MNT}/{SNAP_DIR}/{self.name}"
-
-    @property
-    def received(self) -> bool:
-        return self.read_only and self.received_uuid != ""
-
-
-def snaps(machine: str, subvol: str) -> list[Snap]:
-    """Snapshots of subvol on machine, oldest first, read from btrfs."""
-    ro = {
-        line.split(" path ", 1)[1]
-        for line in rem(machine, f"btrfs subvolume list -r {BTRFS_MNT}").stdout.splitlines()
-        if " path " in line
-    }
-    prefix = f"{SNAP_DIR}/{SNAP_PREFIX}{subvol.lstrip('@')}_"
-    result = []
-    for line in rem(machine, f"btrfs subvolume list -u -R {BTRFS_MNT}").stdout.splitlines():
-        head, _, path = line.partition(" path ")
-        if not path.startswith(prefix):
-            continue
-        fields = head.split()
-        ruuid = fields[fields.index("received_uuid") + 1]
-        result.append(Snap(
-            name=path.rsplit("/", 1)[1],
-            uuid=fields[fields.index("uuid") + 1],
-            received_uuid="" if ruuid == "-" else ruuid,
-            read_only=path in ro,
-        ))
-    return sorted(result, key=lambda s: s.name)
-
-
-def run_cycle(master_cli, *, expect_ok: bool = True) -> str:
-    r = master_cli("run", check=False)
-    out = r.stdout + r.stderr
-    if expect_ok:
-        assert r.returncode == 0, f"btrepl run failed:\n{out}"
-    return out
-
-
-def sends(log: str, slave_ip: str) -> dict[str, str]:
-    """snapshot name -> parent from the 'sending' log lines for one slave."""
-    return {m[1]: m[2].strip('"') for m in SENDING.finditer(log) if m[3] == slave_ip}
+from conftest import MASTER, SLAVES, SSH_KEY, SUBVOLS, rem
+from helpers import CONFIG, run_cycle, sends, snaps
 
 
 @pytest.fixture(scope="module", autouse=True)

@@ -7,7 +7,7 @@ import grpc
 import pytest
 
 from btrepl import BtreplClient
-from conftest import GRPC_SOCKET, MASTER, rem, ssh_tunnel
+from conftest import GRPC_SOCKET, MASTER, rem, tunnel
 
 PKI = "/root/btrepl-test-pki"
 TLS_PORT = 50052
@@ -58,7 +58,7 @@ extendedKeyUsage=serverAuth"
     files = {n: rem(MASTER, f"cat {PKI}/{n}").stdout.encode()
              for n in ("ca.crt", "client.crt", "client.key", "stranger.crt", "stranger.key")}
     try:
-        with ssh_tunnel(MASTER, TLS_PORT) as port:
+        with tunnel(MASTER, TLS_PORT) as port:
             yield f"127.0.0.1:{port}", files
     finally:
         rem(MASTER, f"systemctl stop {TLS_UNIT}; rm -rf {PKI}", check=False)
