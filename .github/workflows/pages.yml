@@ -1,13 +1,15 @@
 # Builds the GitHub Pages site: the MkDocs docs, install.sh from the latest
-# release, and a signed APT repository with the .deb packages of all releases.
+# release, and signed APT and RPM repositories with the packages of all
+# releases.
 #
 #   https://eleutherius.github.io/btrepl/             docs
 #   https://eleutherius.github.io/btrepl/install.sh   installer
 #   https://eleutherius.github.io/btrepl/apt          APT repository
+#   https://eleutherius.github.io/btrepl/rpm          RPM repository (dnf, yum, zypper)
 #
-# release.yml starts this workflow after publishing a release. The APT repo
-# needs the APT_GPG_PRIVATE_KEY secret (and APT_GPG_PASSPHRASE if the key has
-# one); without it the site is published without /apt.
+# release.yml starts this workflow after publishing a release. Both repos are
+# signed with the APT_GPG_PRIVATE_KEY secret (and APT_GPG_PASSPHRASE if the key
+# has one); without it the site is published without /apt and /rpm.
 name: pages
 on:
   push:
@@ -16,6 +18,7 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'scripts/build-apt-repo.sh'
+      - 'scripts/build-rpm-repo.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -54,40 +57,41 @@ jobs:
           install -m 644 rel/install.sh site/install.sh
           echo "install.sh from $tag" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Download .deb packages of all releases
+      - name: Download the packages of all releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p debs
+          mkdir -p debs rpms
           for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
                          --exclude-pre-releases --limit 100 --json tagName -q '.[].tagName'); do
             d="rel/$tag"
             mkdir -p "$d"
-            gh release download "$tag" --repo "$GITHUB_REPOSITORY" -D "$d" -p '*.deb' -p SHA256SUMS || continue
-            if ls "$d"/*.deb >/dev/null 2>&1; then
-              if [ -f "$d/SHA256SUMS" ]; then
-                (cd "$d" && sha256sum -c --ignore-missing SHA256SUMS)
-              fi
-              cp "$d"/*.deb debs/
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" -D "$d" \
+              -p '*.deb' -p '*.rpm' -p SHA256SUMS || continue
+            if [ -f "$d/SHA256SUMS" ]; then
+              (cd "$d" && sha256sum -c --ignore-missing SHA256SUMS)
             fi
+            cp "$d"/*.deb debs/ 2>/dev/null || true
+            cp "$d"/*.rpm rpms/ 2>/dev/null || true
           done
-          ls -l debs
+          ls -l debs rpms
 
-      - name: Build the signed APT repository
+      - name: Build the signed APT and RPM repositories
         env:
           APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
           APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
         run: |
           if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
-            echo "::warning::APT_GPG_PRIVATE_KEY is not set, publishing the site without /apt"
+            echo "::warning::APT_GPG_PRIVATE_KEY is not set, publishing the site without /apt and /rpm"
             exit 0
           fi
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends apt-utils
+          sudo apt-get install -y -qq --no-install-recommends apt-utils createrepo-c
           export GNUPGHOME="$RUNNER_TEMP/gnupg"
           install -d -m 700 "$GNUPGHOME"
           printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
           sh scripts/build-apt-repo.sh debs site/apt
+          sh scripts/build-rpm-repo.sh rpms site/rpm https://eleutherius.github.io/btrepl/rpm
           rm -rf "$GNUPGHOME"
 
       - uses: actions/configure-pages@v5

@@ -52,7 +52,7 @@ The pytest options `--spin-up`, `--teardown` and `--destructive` are defined in 
 
 ### Lint
 
-Lint runs through pre-commit (`pre-commit run --all-files`): `gofmt -w`, shellcheck, and YAML/JSON/TOML/whitespace checks. CI runs the same hooks. MkDocs docs (`docs/`, `mkdocs.yml`) are built with `mkdocs build --strict` and deployed to GitHub Pages by `.github/workflows/pages.yml`. That workflow is the only one that deploys Pages (a deploy replaces the whole site): it adds `install.sh` from the latest release and builds the signed APT repo under `/apt` with `scripts/build-apt-repo.sh` from the `.deb` files of all releases (secret `APT_GPG_PRIVATE_KEY`, optional `APT_GPG_PASSPHRASE`). `release.yml` starts it with `gh workflow run --ref main` after publishing a release.
+Lint runs through pre-commit (`pre-commit run --all-files`): `gofmt -w`, shellcheck, and YAML/JSON/TOML/whitespace checks. CI runs the same hooks. MkDocs docs (`docs/`, `mkdocs.yml`) are built with `mkdocs build --strict` and deployed to GitHub Pages by `.github/workflows/pages.yml`. That workflow is the only one that deploys Pages (a deploy replaces the whole site): it adds `install.sh` from the latest release and builds the signed APT repo under `/apt` (`scripts/build-apt-repo.sh`) and the RPM repo under `/rpm` (`scripts/build-rpm-repo.sh`, signed metadata, unsigned packages) from the packages of all releases, with one GPG key (secret `APT_GPG_PRIVATE_KEY`, optional `APT_GPG_PASSPHRASE`). `release.yml` starts it with `gh workflow run --ref main` after publishing a release.
 
 ## Architecture
 

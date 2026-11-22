@@ -6,6 +6,7 @@
 
 - The latest `install.sh` is served from the site: `curl -LsSf https://eleutherius.github.io/btrepl/install.sh | sh`. The release URL keeps working.
 - A signed APT repository at `https://eleutherius.github.io/btrepl/apt` with the `.deb` packages of all releases. See [Installation](https://eleutherius.github.io/btrepl/installation/#apt-repository-debian-ubuntu).
+- A signed RPM repository for dnf, yum and zypper at `https://eleutherius.github.io/btrepl/rpm`. See [Installation](https://eleutherius.github.io/btrepl/installation/#rpm-repository-fedora-rhel-opensuse).
 
 ### Changed
 

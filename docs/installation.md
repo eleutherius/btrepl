@@ -91,7 +91,24 @@ sudo apt update
 sudo apt install btrepl
 ```
 
-The package depends on `btrfs-progs` and `openssh-client`, installs the binary and `btrepl.service`, then enables and starts the service. The repository keeps every release, so you can pin an older one with `apt install btrepl=<version>`.
+Check that the key fingerprint is `C4C4 E2F0 B030 7323 F3C1 974F 1018 9E6C 046B AC44` (`gpg --show-keys /etc/apt/keyrings/btrepl.gpg`). The package depends on `btrfs-progs` and `openssh-client`, installs the binary and `btrepl.service`, then enables and starts the service. The repository keeps every release, so you can pin an older one with `apt install btrepl=<version>`.
+
+## RPM repository (Fedora / RHEL / openSUSE)
+
+The same packages are published to a signed RPM repository for `dnf`, `yum` and `zypper`:
+
+```bash
+# Fedora, RHEL, Rocky, Alma
+sudo curl -fsSL https://eleutherius.github.io/btrepl/rpm/btrepl.repo \
+  -o /etc/yum.repos.d/btrepl.repo
+sudo dnf install btrepl
+
+# openSUSE, SLES
+sudo zypper addrepo https://eleutherius.github.io/btrepl/rpm/btrepl.repo
+sudo zypper install btrepl
+```
+
+On the first install the package manager asks you to accept the repository key: check that its fingerprint is `C4C4 E2F0 B030 7323 F3C1 974F 1018 9E6C 046B AC44`. The repository metadata is signed and lists the checksum of every package, so each package is verified through it (`repo_gpgcheck=1`). The packages themselves are not signed. `btrfs-progs` is not pulled in, because the package name differs between distros (on RHEL-based systems it comes from EPEL), so install it separately.
 
 ## .deb / .rpm files
 
