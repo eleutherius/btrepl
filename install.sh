@@ -1,7 +1,7 @@
 #!/bin/sh
 # btrepl installer.
 #
-#   curl -LsSf https://github.com/eleutherius/btrepl/releases/latest/download/install.sh | sh
+#   curl -LsSf https://eleutherius.github.io/btrepl/install.sh | sh
 #
 # Environment variables:
 #   BTREPL_VERSION      release tag to install (default: latest), e.g. v0.2.0

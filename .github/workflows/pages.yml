@@ -1,0 +1,106 @@
+# Builds the GitHub Pages site: the MkDocs docs, install.sh from the latest
+# release, and a signed APT repository with the .deb packages of all releases.
+#
+#   https://eleutherius.github.io/btrepl/             docs
+#   https://eleutherius.github.io/btrepl/install.sh   installer
+#   https://eleutherius.github.io/btrepl/apt          APT repository
+#
+# release.yml starts this workflow after publishing a release. The APT repo
+# needs the APT_GPG_PRIVATE_KEY secret (and APT_GPG_PASSPHRASE if the key has
+# one); without it the site is published without /apt.
+name: pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'scripts/build-apt-repo.sh'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install -r docs/requirements.txt
+      - run: mkdocs build --strict
+
+      # The site serves the install.sh of the latest release, the same file
+      # that SHA256SUMS and the provenance attestation cover.
+      - name: Add install.sh from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          mkdir -p rel
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -D rel -p install.sh -p SHA256SUMS
+          (cd rel && sha256sum -c --ignore-missing SHA256SUMS)
+          install -m 644 rel/install.sh site/install.sh
+          echo "install.sh from $tag" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download .deb packages of all releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p debs
+          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
+                         --exclude-pre-releases --limit 100 --json tagName -q '.[].tagName'); do
+            d="rel/$tag"
+            mkdir -p "$d"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" -D "$d" -p '*.deb' -p SHA256SUMS || continue
+            if ls "$d"/*.deb >/dev/null 2>&1; then
+              if [ -f "$d/SHA256SUMS" ]; then
+                (cd "$d" && sha256sum -c --ignore-missing SHA256SUMS)
+              fi
+              cp "$d"/*.deb debs/
+            fi
+          done
+          ls -l debs
+
+      - name: Build the signed APT repository
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::APT_GPG_PRIVATE_KEY is not set, publishing the site without /apt"
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends apt-utils
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          sh scripts/build-apt-repo.sh debs site/apt
+          rm -rf "$GNUPGHOME"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

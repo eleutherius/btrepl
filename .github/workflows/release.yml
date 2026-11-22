@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  actions: write       # start pages.yml after the release
   id-token: write      # build provenance attestations
   attestations: write
 
@@ -45,3 +46,11 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+
+    # Events from GITHUB_TOKEN do not start other workflows, except
+    # workflow_dispatch. Run on main: the github-pages environment only
+    # accepts deployments from the default branch, not from tags.
+    - name: Publish install.sh and the APT repository to the site
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

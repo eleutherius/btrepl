@@ -11,13 +11,13 @@
 ## Install script (recommended)
 
 ```bash
-curl -LsSf https://github.com/eleutherius/btrepl/releases/latest/download/install.sh | sh
+curl -LsSf https://eleutherius.github.io/btrepl/install.sh | sh
 ```
 
 or with `wget`:
 
 ```bash
-wget -qO- https://github.com/eleutherius/btrepl/releases/latest/download/install.sh | sh
+wget -qO- https://eleutherius.github.io/btrepl/install.sh | sh
 ```
 
 The script works on Debian/Ubuntu, Fedora/RHEL/Rocky/Alma, openSUSE/SLES, Arch and Alpine, on `amd64` and `arm64`. It:
@@ -42,14 +42,14 @@ Options are passed as environment variables:
 Example: pin a version and skip the service:
 
 ```bash
-curl -LsSf https://github.com/eleutherius/btrepl/releases/latest/download/install.sh \
+curl -LsSf https://eleutherius.github.io/btrepl/install.sh \
   | BTREPL_VERSION=v0.2.0 BTREPL_NO_SERVICE=1 sh
 ```
 
 To read the script before running it:
 
 ```bash
-curl -LsSf https://github.com/eleutherius/btrepl/releases/latest/download/install.sh -o install.sh
+curl -LsSf https://eleutherius.github.io/btrepl/install.sh -o install.sh
 less install.sh
 sh install.sh
 ```
@@ -70,11 +70,32 @@ sha256sum -c --ignore-missing SHA256SUMS
 gh attestation verify btrepl_linux_amd64 --repo eleutherius/btrepl
 ```
 
-Attestations exist for releases from v0.2.0 on. They cover the binaries, the `.deb` and `.rpm` packages, `btrepl.service` and `install.sh`.
+Attestations exist for releases from v0.2.0 on. They cover the binaries, the `.deb` and `.rpm` packages, `btrepl.service` and `install.sh`. The `install.sh` on the site is the file from the latest release, so you can check it the same way:
 
-## .deb / .rpm packages
+```bash
+curl -LsSfO https://eleutherius.github.io/btrepl/install.sh
+gh attestation verify install.sh --repo eleutherius/btrepl
+```
 
-Each [release](https://github.com/eleutherius/btrepl/releases) also contains `.deb` and `.rpm` packages for `amd64` and `arm64`. They install the binary and `btrepl.service`, then enable and start the service:
+## APT repository (Debian / Ubuntu)
+
+Packages for `amd64` and `arm64` are published to a signed APT repository, so `btrepl` updates with the rest of the system:
+
+```bash
+sudo install -d -m 755 /etc/apt/keyrings
+curl -fsSL https://eleutherius.github.io/btrepl/apt/btrepl.gpg \
+  | sudo tee /etc/apt/keyrings/btrepl.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/btrepl.gpg] https://eleutherius.github.io/btrepl/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/btrepl.list
+sudo apt update
+sudo apt install btrepl
+```
+
+The package depends on `btrfs-progs` and `openssh-client`, installs the binary and `btrepl.service`, then enables and starts the service. The repository keeps every release, so you can pin an older one with `apt install btrepl=<version>`.
+
+## .deb / .rpm files
+
+Each [release](https://github.com/eleutherius/btrepl/releases) also contains `.deb` and `.rpm` files for `amd64` and `arm64`:
 
 ```bash
 # Debian / Ubuntu
@@ -84,7 +105,7 @@ sudo apt install ./btrepl_<version>_amd64.deb
 sudo dnf install ./btrepl_<version>_amd64.rpm
 ```
 
-The packages do not pull in `btrfs-progs`, so install it separately.
+The `.rpm` does not pull in `btrfs-progs`, because the package name differs between distros, so install it separately.
 
 ## Build from source
 

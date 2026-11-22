@@ -11,6 +11,11 @@ description: btrfs snapshot replication tool
 homepage: https://github.com/eleutherius/btrepl
 license: MIT
 
+# Package names differ on openSUSE (btrfsprogs), so only the ssh client is
+# required; install.sh installs btrfs-progs.
+depends:
+  - openssh-clients
+
 contents:
   - src: build/bin/btrepl_linux_@ARCH@
     dst: /usr/local/bin/btrepl

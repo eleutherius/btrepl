@@ -6,6 +6,8 @@ GO_ROOT  := src/btrepl
 BUILD_DIR := build
 DEB_MAINTAINER := Oleksandr Liakhov <eleutherius69@gmail.com>
 DEB_DESCRIPTION := btrfs snapshot replication tool
+DEB_DEPENDS := btrfs-progs, openssh-client
+HOMEPAGE := https://eleutherius.github.io/btrepl/
 # rpm forbids '-' in Version, so git-describe suffixes become dot-separated.
 RPM_VERSION := $(subst -,.,$(VERSION))
 NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
@@ -60,8 +62,8 @@ $(BUILD_DIR)/$(BINARY)_$(VERSION)_%.deb: $(BUILD_DIR)/bin/$(BINARY)_linux_%
 	@install -m755 $< $(PKG)/usr/local/bin/$(BINARY)
 	@install -m644 $(GO_ROOT)/deploy/$(BINARY).service $(PKG)/lib/systemd/system/$(BINARY).service
 
-	@printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: %s\nDescription: %s\n' \
-		"$(BINARY)" "$(VERSION)" "$(GOARCH)" "$(DEB_MAINTAINER)" "$(DEB_DESCRIPTION)" \
+	@printf 'Package: %s\nVersion: %s\nArchitecture: %s\nMaintainer: %s\nDepends: %s\nHomepage: %s\nDescription: %s\n' \
+		"$(BINARY)" "$(VERSION)" "$(GOARCH)" "$(DEB_MAINTAINER)" "$(DEB_DEPENDS)" "$(HOMEPAGE)" "$(DEB_DESCRIPTION)" \
 		> $(PKG)/DEBIAN/control
 
 	@printf '#!/bin/sh\nset -e\nsystemctl daemon-reload\nsystemctl enable $(BINARY).service\nsystemctl start $(BINARY).service\n' \
